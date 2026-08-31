@@ -22,7 +22,7 @@ _G.auto_replay = true
 _G.teleport_to_enemies = true
 -- ...see config.example.lua for the full list
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/OWNER/REPO/main/dq.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/eduardonash/dq-autofarm/main/dq.lua"))()
 ```
 
 `config.example.lua` is a complete, ready-to-paste settings block with the

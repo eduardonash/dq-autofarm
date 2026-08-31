@@ -141,4 +141,4 @@ _G.UI_lvl = "33"
 _G.webhookEnabled = false
 _G.webhookLink = nil -- your webhook
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/OWNER/REPO/main/dq.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/eduardonash/dq-autofarm/main/dq.lua"))()
