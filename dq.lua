@@ -145,6 +145,19 @@ end
 if type(_G.maxWaitTimeInLobby) ~= "number" then
     _G.maxWaitTimeInLobby = 15
 end
+-- Where to stand while attacking. "default" walks straight at the mob; "above"
+-- and "below" park you off its hitbox on a hover pad; "behind" comes in from
+-- its back. Anything past ~13 studs is out of weapon reach, so keep the offsets
+-- small or you will hover there swinging at nothing.
+if _G.attack_position == nil then
+    _G.attack_position = "default"
+end
+if type(_G.attack_height) ~= "number" then
+    _G.attack_height = 10
+end
+if type(_G.attack_distance) ~= "number" then
+    _G.attack_distance = 8
+end
 
 function isLobbyPlace()
     return game.PlaceId == LOBBY_PLACE_ID or game.PlaceId == LOBBY_100_PLACE_ID
@@ -344,6 +357,499 @@ do
 end
 
 -- ============================================================================
+-- Config panel.
+-- Everything the script reads out of _G, grouped into sections you can switch
+-- off as a unit. Changes apply immediately and are saved to disk, so they
+-- survive the teleport into the next dungeon; the settings block above the
+-- loadstring only supplies the starting values on a fresh install.
+-- Toggle it with Right Shift.
+-- ============================================================================
+CONFIG_FILE = "dq_autofarm_config.json"
+
+configSchema = {
+    {
+        name = "Dungeon",
+        master = "auto_join_dungeon",
+        options = {
+            { key = "auto_choose_dungeon_and_difficulty", label = "Pick for my level", kind = "bool" },
+            { key = "dungeon", label = "Dungeon", kind = "list", choices = {
+                "(auto)", "Desert Temple", "Winter Outpost", "Pirate Island", "King's Castle",
+                "The Underworld", "Samurai Palace", "The Canals", "Ghastly Harbor",
+                "Steampunk Sewers", "Orbital Outpost", "Volcanic Chambers", "Aquatic Temple",
+                "Enchanted Forest", "Northern Lands", "Gilded Skies", "Oni Dungeon",
+            } },
+            { key = "difficulty", label = "Difficulty", kind = "list", choices = {
+                "(auto)", "Easy", "Medium", "Hard", "Insane", "Nightmare",
+            } },
+            { key = "hardcore", label = "Hardcore", kind = "bool" },
+            { key = "wavedefense", label = "Wave defence", kind = "bool" },
+            { key = "auto_replay", label = "Auto replay", kind = "bool" },
+            { key = "auto_replay_delay", label = "Replay delay (s)", kind = "number" },
+        },
+    },
+    {
+        name = "Combat",
+        master = "auto_attack",
+        options = {
+            { key = "attack_position", label = "Stand", kind = "list", choices = {
+                "default", "above", "below", "behind",
+            }, help = "where to sit relative to the mob" },
+            { key = "attack_height", label = "Height offset", kind = "number", help = "studs above/below" },
+            { key = "attack_distance", label = "Attack distance", kind = "number", help = "how close to get" },
+            { key = "doInstakill", label = "Instakill", kind = "bool" },
+            { key = "ignoreAbilityRange", label = "Ignore ability range", kind = "bool" },
+            { key = "optimize_mobs", label = "Optimize mobs", kind = "bool" },
+        },
+    },
+    {
+        name = "Teleporting",
+        master = "teleport_to_enemies",
+        options = {
+            { key = "teleport_step", label = "Studs per hop", kind = "number" },
+            { key = "teleport_interval", label = "Seconds per hop", kind = "number" },
+            { key = "teleport_stop_distance", label = "Stop distance", kind = "number" },
+            { key = "SemiTeleports", label = "Short dodge hops", kind = "bool" },
+            { key = "teleportDuringBossOnly", label = "Hops on boss only", kind = "bool" },
+        },
+    },
+    {
+        name = "Boss raid",
+        master = "boss_raid",
+        options = {
+            { key = "auto_choose_raid_boss_tier", label = "Pick highest tier", kind = "bool" },
+            { key = "boss_raid_tier", label = "Tier", kind = "number" },
+        },
+    },
+    {
+        name = "Selling",
+        master = "autosell",
+        options = {
+            { key = "testSell", label = "Dry run (print only)", kind = "bool" },
+            { key = "keep_items_level_requirement", label = "Keep above level", kind = "number" },
+            { key = "keep2spells", label = "Keep 2 spells", kind = "bool" },
+        },
+    },
+    {
+        name = "Gear",
+        options = {
+            { key = "auto_equip_gear", label = "Auto equip gear", kind = "bool" },
+            { key = "equip_type", label = "Equip type", kind = "list", choices = { "physical", "spell" } },
+            { key = "auto_upgrade_equip", label = "Auto upgrade", kind = "bool" },
+            { key = "autoEquipSpell", label = "Auto equip spell", kind = "bool" },
+            { key = "spellType", label = "Spell type", kind = "list", choices = { "physical", "spell" } },
+            { key = "auto_stat_upgrade", label = "Auto spend points", kind = "bool" },
+            { key = "stat", label = "Stat", kind = "list", choices = {
+                "physicalPower", "spellPower", "stamina",
+            } },
+        },
+    },
+    {
+        name = "Performance",
+        master = "fpsBoost",
+        options = {
+            { key = "destroy_map", label = "Strip map decoration", kind = "bool" },
+            { key = "hide_projectiles", label = "Hide projectiles", kind = "bool" },
+            { key = "del_armor", label = "Delete armor models", kind = "bool" },
+            { key = "del_weapon", label = "Delete weapon models", kind = "bool" },
+            { key = "wall_transparency", label = "Wall transparency", kind = "number" },
+            { key = "loadSlow", label = "Build walls slowly", kind = "bool" },
+            { key = "extremelyFast", label = "Think every frame", kind = "bool" },
+        },
+    },
+    {
+        name = "Visuals",
+        options = {
+            { key = "showTarget", label = "Highlight target", kind = "bool" },
+            { key = "showPath", label = "Show path", kind = "bool" },
+        },
+    },
+    {
+        name = "Webhook",
+        master = "webhookEnabled",
+        options = {
+            { key = "webhookLink", label = "URL", kind = "text" },
+        },
+    },
+}
+
+function saveConfig()
+    if not writefile then
+        return false
+    end
+    local data = {}
+    for _, section in ipairs(configSchema) do
+        if section.master then
+            data[section.master] = _G[section.master]
+        end
+        for _, option in ipairs(section.options) do
+            data[option.key] = _G[option.key]
+        end
+    end
+    local ok = pcall(function()
+        writefile(CONFIG_FILE, game:GetService("HttpService"):JSONEncode(data))
+    end)
+    return ok
+end
+
+function loadSavedConfig()
+    if not (readfile and isfile) then
+        return false
+    end
+    local ok, data = pcall(function()
+        if not isfile(CONFIG_FILE) then
+            return nil
+        end
+        return game:GetService("HttpService"):JSONDecode(readfile(CONFIG_FILE))
+    end)
+    if not ok or type(data) ~= "table" then
+        return false
+    end
+    for key, value in pairs(data) do
+        _G[key] = value
+    end
+    return true
+end
+
+loadSavedConfig()
+
+do
+    local UserInputService = game:GetService("UserInputService")
+
+    local COLOURS = {
+        bg = Color3.fromRGB(16, 17, 22),
+        row = Color3.fromRGB(24, 26, 33),
+        header = Color3.fromRGB(28, 31, 42),
+        accent = Color3.fromRGB(94, 140, 214),
+        on = Color3.fromRGB(72, 158, 106),
+        off = Color3.fromRGB(72, 76, 88),
+        text = Color3.fromRGB(236, 239, 246),
+        dim = Color3.fromRGB(140, 148, 168),
+    }
+
+    local function corner(parent, radius)
+        local object = Instance.new("UICorner")
+        object.CornerRadius = UDim.new(0, radius or 6)
+        object.Parent = parent
+        return object
+    end
+
+    local function label(parent, text, size, colour, bold)
+        local object = Instance.new("TextLabel")
+        object.BackgroundTransparency = 1
+        object.Font = bold and Enum.Font.GothamBold or Enum.Font.Gotham
+        object.TextSize = size
+        object.TextColor3 = colour
+        object.TextXAlignment = Enum.TextXAlignment.Left
+        object.TextTruncate = Enum.TextTruncate.AtEnd
+        object.Text = text
+        object.Parent = parent
+        return object
+    end
+
+    local function build()
+        local parent
+        if gethui then
+            local ok, hidden = pcall(gethui)
+            if ok then
+                parent = hidden
+            end
+        end
+        parent = parent or game:GetService("CoreGui")
+        for _, existing in ipairs(parent:GetChildren()) do
+            if existing.Name == "dqConfig" then
+                existing:Destroy()
+            end
+        end
+
+        local gui = Instance.new("ScreenGui")
+        gui.Name = "dqConfig"
+        gui.ResetOnSpawn = false
+        gui.IgnoreGuiInset = true
+        gui.DisplayOrder = 1000
+
+        local window = Instance.new("Frame")
+        window.Size = UDim2.new(0, 430, 0, 520)
+        window.Position = UDim2.new(0.5, -215, 0.5, -260)
+        window.BackgroundColor3 = COLOURS.bg
+        window.BorderSizePixel = 0
+        window.Active = true
+        window.Draggable = true
+        window.Parent = gui
+        corner(window, 10)
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = COLOURS.accent
+        stroke.Transparency = 0.55
+        stroke.Parent = window
+
+        local title = label(window, "DQ AUTOFARM  ·  CONFIG", 13, COLOURS.accent, true)
+        title.Position = UDim2.new(0, 16, 0, 14)
+        title.Size = UDim2.new(1, -140, 0, 16)
+
+        local hint = label(window, "Right Shift to hide", 11, COLOURS.dim)
+        hint.Position = UDim2.new(1, -170, 0, 15)
+        hint.Size = UDim2.new(0, 110, 0, 14)
+        hint.TextXAlignment = Enum.TextXAlignment.Right
+
+        local saveButton = Instance.new("TextButton")
+        saveButton.Size = UDim2.new(0, 46, 0, 20)
+        saveButton.Position = UDim2.new(1, -58, 0, 12)
+        saveButton.BackgroundColor3 = COLOURS.accent
+        saveButton.Text = "SAVE"
+        saveButton.Font = Enum.Font.GothamBold
+        saveButton.TextSize = 11
+        saveButton.TextColor3 = COLOURS.text
+        saveButton.AutoButtonColor = true
+        saveButton.Parent = window
+        corner(saveButton, 5)
+
+        local body = Instance.new("ScrollingFrame")
+        body.Size = UDim2.new(1, -20, 1, -50)
+        body.Position = UDim2.new(0, 10, 0, 40)
+        body.BackgroundTransparency = 1
+        body.BorderSizePixel = 0
+        body.ScrollBarThickness = 4
+        body.ScrollBarImageColor3 = COLOURS.accent
+        body.CanvasSize = UDim2.new(0, 0, 0, 0)
+        body.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        body.Parent = window
+
+        local list = Instance.new("UIListLayout")
+        list.Padding = UDim.new(0, 5)
+        list.SortOrder = Enum.SortOrder.LayoutOrder
+        list.Parent = body
+
+        -- One dropdown overlay reused by every list control.
+        local menu = Instance.new("ScrollingFrame")
+        menu.Size = UDim2.new(0, 190, 0, 150)
+        menu.BackgroundColor3 = COLOURS.header
+        menu.BorderSizePixel = 0
+        menu.ScrollBarThickness = 3
+        menu.Visible = false
+        menu.ZIndex = 20
+        menu.Parent = window
+        corner(menu, 6)
+        local menuList = Instance.new("UIListLayout")
+        menuList.Parent = menu
+
+        local function openMenu(control, choices, onPick)
+            for _, child in ipairs(menu:GetChildren()) do
+                if child:IsA("TextButton") then
+                    child:Destroy()
+                end
+            end
+            local absolute = control.AbsolutePosition - window.AbsolutePosition
+            menu.Position = UDim2.new(0, absolute.X - 40, 0, absolute.Y + 24)
+            menu.CanvasSize = UDim2.new(0, 0, 0, #choices * 24)
+            menu.Size = UDim2.new(0, 190, 0, math.min(150, #choices * 24))
+            for index, choice in ipairs(choices) do
+                local item = Instance.new("TextButton")
+                item.Size = UDim2.new(1, 0, 0, 24)
+                item.BackgroundTransparency = 1
+                item.Text = "  " .. choice
+                item.Font = Enum.Font.Gotham
+                item.TextSize = 12
+                item.TextColor3 = COLOURS.text
+                item.TextXAlignment = Enum.TextXAlignment.Left
+                item.LayoutOrder = index
+                item.ZIndex = 21
+                item.Parent = menu
+                item.MouseButton1Click:Connect(function()
+                    menu.Visible = false
+                    onPick(choice)
+                end)
+            end
+            menu.Visible = true
+        end
+
+        local rowControls = {}
+
+        local function addRow(section, option, order)
+            local row = Instance.new("Frame")
+            row.Size = UDim2.new(1, -6, 0, 28)
+            row.BackgroundColor3 = COLOURS.row
+            row.BorderSizePixel = 0
+            row.LayoutOrder = order
+            row.Parent = body
+            corner(row, 5)
+
+            local text = option.label
+            if option.help then
+                text = text .. "  (" .. option.help .. ")"
+            end
+            local name = label(row, text, 12, COLOURS.text)
+            name.Position = UDim2.new(0, 12, 0, 0)
+            name.Size = UDim2.new(1, -170, 1, 0)
+
+            local control
+            if option.kind == "bool" then
+                control = Instance.new("TextButton")
+                control.Size = UDim2.new(0, 52, 0, 18)
+                control.Position = UDim2.new(1, -64, 0.5, -9)
+                control.Font = Enum.Font.GothamBold
+                control.TextSize = 10
+                control.TextColor3 = COLOURS.text
+                control.BorderSizePixel = 0
+                control.Parent = row
+                corner(control, 9)
+                local function refresh()
+                    local on = _G[option.key] and true or false
+                    control.Text = on and "ON" or "OFF"
+                    control.BackgroundColor3 = on and COLOURS.on or COLOURS.off
+                end
+                control.MouseButton1Click:Connect(function()
+                    _G[option.key] = not _G[option.key]
+                    refresh()
+                end)
+                refresh()
+            elseif option.kind == "list" then
+                control = Instance.new("TextButton")
+                control.Size = UDim2.new(0, 132, 0, 20)
+                control.Position = UDim2.new(1, -144, 0.5, -10)
+                control.BackgroundColor3 = COLOURS.header
+                control.Font = Enum.Font.Gotham
+                control.TextSize = 11
+                control.TextColor3 = COLOURS.text
+                control.BorderSizePixel = 0
+                control.Parent = row
+                corner(control, 5)
+                local function refresh()
+                    local value = _G[option.key]
+                    control.Text = (value == nil and "(auto)" or tostring(value)) .. "   v"
+                end
+                control.MouseButton1Click:Connect(function()
+                    openMenu(control, option.choices, function(choice)
+                        _G[option.key] = (choice == "(auto)") and nil or choice
+                        refresh()
+                    end)
+                end)
+                refresh()
+            else
+                control = Instance.new("TextBox")
+                control.Size = UDim2.new(0, 132, 0, 20)
+                control.Position = UDim2.new(1, -144, 0.5, -10)
+                control.BackgroundColor3 = COLOURS.header
+                control.Font = Enum.Font.Gotham
+                control.TextSize = 11
+                control.TextColor3 = COLOURS.text
+                control.ClearTextOnFocus = false
+                control.BorderSizePixel = 0
+                control.Text = tostring(_G[option.key] == nil and "" or _G[option.key])
+                control.Parent = row
+                corner(control, 5)
+                control.FocusLost:Connect(function()
+                    if option.kind == "number" then
+                        local number = tonumber(control.Text)
+                        if number then
+                            _G[option.key] = number
+                        else
+                            control.Text = tostring(_G[option.key] or "")
+                        end
+                    else
+                        _G[option.key] = control.Text ~= "" and control.Text or nil
+                    end
+                end)
+            end
+
+            rowControls[#rowControls + 1] = { section = section, row = row, control = control, name = name }
+        end
+
+        local order = 0
+        local sectionRows = {}
+
+        for _, section in ipairs(configSchema) do
+            order = order + 1
+            local header = Instance.new("Frame")
+            header.Size = UDim2.new(1, -6, 0, 30)
+            header.BackgroundColor3 = COLOURS.header
+            header.BorderSizePixel = 0
+            header.LayoutOrder = order
+            header.Parent = body
+            corner(header, 5)
+
+            local heading = label(header, string.upper(section.name), 12, COLOURS.accent, true)
+            heading.Position = UDim2.new(0, 12, 0, 0)
+            heading.Size = UDim2.new(1, -90, 1, 0)
+
+            if section.master then
+                local toggle = Instance.new("TextButton")
+                toggle.Size = UDim2.new(0, 52, 0, 18)
+                toggle.Position = UDim2.new(1, -64, 0.5, -9)
+                toggle.Font = Enum.Font.GothamBold
+                toggle.TextSize = 10
+                toggle.TextColor3 = COLOURS.text
+                toggle.BorderSizePixel = 0
+                toggle.Parent = header
+                corner(toggle, 9)
+                sectionRows[section.name] = toggle
+
+                local function refresh()
+                    local on = _G[section.master] and true or false
+                    toggle.Text = on and "ON" or "OFF"
+                    toggle.BackgroundColor3 = on and COLOURS.on or COLOURS.off
+                    for _, entry in ipairs(rowControls) do
+                        if entry.section == section then
+                            entry.control.Active = on
+                            if entry.control:IsA("TextButton") then
+                                entry.control.AutoButtonColor = on
+                            elseif entry.control:IsA("TextBox") then
+                                -- TextBox has no AutoButtonColor; setting it threw
+                                -- and took the whole panel down with it.
+                                entry.control.TextEditable = on
+                            end
+                            entry.name.TextColor3 = on and COLOURS.text or COLOURS.dim
+                            entry.row.BackgroundTransparency = on and 0 or 0.5
+                        end
+                    end
+                end
+                toggle.MouseButton1Click:Connect(function()
+                    _G[section.master] = not _G[section.master]
+                    refresh()
+                end)
+                section.refreshMaster = refresh
+            end
+
+            for _, option in ipairs(section.options) do
+                order = order + 1
+                addRow(section, option, order)
+            end
+        end
+
+        for _, section in ipairs(configSchema) do
+            if section.refreshMaster then
+                section.refreshMaster()
+            end
+        end
+
+        saveButton.MouseButton1Click:Connect(function()
+            local saved = saveConfig()
+            saveButton.Text = saved and "SAVED" or "NO FS"
+            delay(1.4, function()
+                saveButton.Text = "SAVE"
+            end)
+        end)
+
+        -- Open on a fresh install so the panel is discoverable, then stay out
+        -- of the way once there are saved settings.
+        window.Visible = not (isfile and pcall(isfile, CONFIG_FILE) and isfile(CONFIG_FILE))
+        gui.Parent = parent
+
+        UserInputService.InputBegan:Connect(function(input, processed)
+            if processed then
+                return
+            end
+            if input.KeyCode == Enum.KeyCode.RightShift then
+                window.Visible = not window.Visible
+                menu.Visible = false
+            end
+        end)
+    end
+
+    pcall(build)
+end
+
+
+-- ============================================================================
 -- Auto replay.
 -- Mirrors the game's own "Replay Dungeon?" YES button: build the same payload
 -- its collectDungeonData() builds, then fire remotes.replayDungeon. Only the
@@ -411,8 +917,55 @@ end
 -- cannot find ground, so movement degrades instead of breaking.
 -- ============================================================================
 local lastTeleportAt = 0
+local hoverPad = nil
 
-function teleportToward(destination, stopDistance)
+-- Standing above or below a mob means there is no floor to land on, so the
+-- teleporter carries its own: one invisible anchored pad kept under your feet.
+local function ensureHoverPad(position)
+    if not hoverPad or not hoverPad.Parent then
+        hoverPad = Instance.new("Part")
+        hoverPad.Name = "dqHoverPad"
+        hoverPad.Size = Vector3.new(8, 1, 8)
+        hoverPad.Anchored = true
+        hoverPad.CanCollide = true
+        hoverPad.Transparency = 1
+        hoverPad.Parent = workspace
+        pcall(function()
+            game:GetService("CollectionService"):AddTag(hoverPad, "RayIgnore")
+        end)
+    end
+    hoverPad.Position = position - Vector3.new(0, 3.5, 0)
+end
+
+function clearHoverPad()
+    if hoverPad then
+        hoverPad:Destroy()
+        hoverPad = nil
+    end
+end
+
+-- Where to stand relative to the enemy, per _G.attack_position.
+-- Returns the position plus whether it needs a hover pad to stand on.
+function attackAnchor(model)
+    local root = enemyRoot(model)
+    if not root then
+        return nil, false
+    end
+    local position = root.Position
+    local mode = _G.attack_position or "default"
+    local height = tonumber(_G.attack_height) or 10
+    if mode == "above" then
+        return position + Vector3.new(0, height, 0), true
+    elseif mode == "below" then
+        return position - Vector3.new(0, height, 0), true
+    elseif mode == "behind" then
+        local distance = tonumber(_G.attack_distance) or 8
+        return position - root.CFrame.LookVector * distance, false
+    end
+    return position, false
+end
+
+function teleportToward(destination, stopDistance, hover)
     if not destination then
         return false
     end
@@ -426,6 +979,10 @@ function teleportToward(destination, stopDistance)
     local delta = destination - from
     local distance = delta.Magnitude
     if distance <= stopDistance then
+        if hover then
+            -- Already in position: hold the pad there so you do not drop off it.
+            ensureHoverPad(root.Position)
+        end
         return false
     end
     local now = tick()
@@ -437,17 +994,23 @@ function teleportToward(destination, stopDistance)
 
     local step = math.min(_G.teleport_step or 40, distance - stopDistance)
     local goal = from + delta.Unit * step
+    local landing
 
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = { character }
-    local ground = workspace:Raycast(goal + Vector3.new(0, 12, 0), Vector3.new(0, -60, 0), params)
-    if not ground then
-        return false
+    if hover then
+        landing = goal
+        ensureHoverPad(landing)
+    else
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = { character, hoverPad }
+        local ground = workspace:Raycast(goal + Vector3.new(0, 12, 0), Vector3.new(0, -60, 0), params)
+        if not ground then
+            return false
+        end
+        landing = ground.Position + Vector3.new(0, 3, 0)
     end
 
     lastTeleportAt = now
-    local landing = ground.Position + Vector3.new(0, 3, 0)
     local velocity = root.AssemblyLinearVelocity
     root.CFrame = CFrame.new(landing, Vector3.new(destination.X, landing.Y, destination.Z))
     root.AssemblyLinearVelocity = velocity
@@ -3169,10 +3732,19 @@ local ok4 = true;
                 if result21 == "chase" then
                     local reached = false
                     if _G.teleport_to_enemies and value7.PrimaryPart then
-                        reached = teleportToward(value7.PrimaryPart.Position, _G.teleport_stop_distance or 10)
+                        local anchor, needsPad = attackAnchor(value7)
+                        if anchor then
+                            reached = teleportToward(
+                                anchor,
+                                tonumber(_G.attack_distance) or tonumber(_G.teleport_stop_distance) or 10,
+                                needsPad
+                            )
+                        end
                         if reached then
                             setAction("teleporting to", value7.Name)
                         end
+                    else
+                        clearHoverPad()
                     end
                     if not reached then
                         local _, value56 = rayCast(value.CFrame, value7.PrimaryPart.CFrame, "RayWhitelist", true)

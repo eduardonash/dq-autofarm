@@ -1,4 +1,13 @@
 -- Dungeon Quest autofarm settings. Load this BEFORE pasted.fixed.lua.
+-- Where to stand while attacking
+-- "default" walks straight at the mob, "above"/"below" park you off its hitbox
+-- on an invisible pad, "behind" comes in from its back. Weapons only reach
+-- about 13 studs, so keep the offsets small or you will sit there swinging at
+-- nothing.
+_G.attack_position = "default"  -- "default" | "above" | "below" | "behind"
+_G.attack_height = 10           -- studs above/below the mob
+_G.attack_distance = 8          -- how close to get before attacking
+
 -- Teleporting
 _G.teleport_to_enemies = true   -- hop to the target enemy instead of walking to it
 _G.teleport_step = 40           -- max studs per hop (smaller looks less obvious)

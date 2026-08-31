@@ -28,11 +28,41 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/eduardonash/dq-autofa
 `config.example.lua` is a complete, ready-to-paste settings block with the
 loader line already at the bottom.
 
+## Config panel
+
+Press **Right Shift** for a panel with every setting laid out in sections, each
+with its own on/off switch that greys out and disables the whole group.
+Dropdowns for the picky ones (dungeon, difficulty, where to stand, which stat),
+switches for the flags, boxes for the numbers.
+
+Changes apply the moment you make them. **Save** writes them to
+`dq_autofarm_config.json` in your executor's workspace folder, and they are
+loaded back on the next run — including after auto replay teleports you into a
+fresh server. Once that file exists it wins over the settings block above the
+loadstring, so the block is really just the starting point on a fresh install.
+Delete the file to go back to it.
+
+The panel opens by itself the first time, then stays hidden.
+
 ## Status panel
 
 A small draggable panel sits bottom-left showing what the script is doing right
 now, plus enemies alive, kills, elapsed time and gold earned this session. It
 replaces the original's per-frame console narration, which flooded F9.
+
+## Where to stand
+
+`_G.attack_position` picks how the farm approaches a mob:
+
+| Value | |
+| --- | --- |
+| `default` | walk/hop straight at it |
+| `above` | sit `attack_height` studs over its head, on an invisible pad |
+| `below` | same, underneath it |
+| `behind` | come in `attack_distance` studs off its back |
+
+Weapons reach about 13 studs, so a large `attack_height` will park you out of
+range swinging at nothing.
 
 ## Notes
 
