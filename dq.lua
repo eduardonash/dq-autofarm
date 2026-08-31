@@ -525,6 +525,16 @@ function waitForEnemyTags(model, minTags, timeout)
     return waited < timeout
 end
 
+-- Enemy models stream in piece by piece and are torn down the moment they die,
+-- so their root can be missing at either end of their life. Everything that
+-- aims at an enemy goes through this instead of indexing .HumanoidRootPart.
+function enemyRoot(model)
+    if not model or not model.Parent then
+        return nil
+    end
+    return model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
+end
+
 -- Injecting before the character exists used to abort the whole chunk on the
 -- first `LocalPlayer.Character.Humanoid` access.
 function waitForCharacter()
@@ -1875,6 +1885,12 @@ local function fn16(a, b, c)
 end
 
 local function fn17(a, b, c)
+    -- Enemy models stream in a piece at a time and are torn down the moment they
+    -- die, so PrimaryPart can be nil either side of this call: reading
+    -- a.PrimaryPart.CFrame here was throwing "attempt to index nil with CFrame".
+    if not a or not a.Parent or not a.PrimaryPart then
+        return
+    end
     if c == nil then
         -- Dropped SETLIST again: `tbl` came out empty, so the ring of hit
         -- volumes around the enemy was never built and fn17 did nothing.
@@ -1887,6 +1903,10 @@ local function fn17(a, b, c)
             { b, -b }, { 0, -b }, { -b, -b },
         }
         for k, v in pairs(tbl) do
+            -- Building the ring yields, and the enemy can die partway through it.
+            if not a.Parent or not a.PrimaryPart then
+                break
+            end
             local result8 = Vector3.new(1, 1, b)
             local CFrame17 = a.PrimaryPart.CFrame
             local CFrame18 = CFrame.new(v[1], 0, v[2])
@@ -2521,30 +2541,41 @@ local function fn31(a)
         Humanoid:MoveTo(tbl2[value].Position)
     else
         setAction("pathfinding failed", "")
-        if value7 then
-            Humanoid:MoveTo(value7.PrimaryPart.Position)
+        local root = value7 and (value7.PrimaryPart or (value7.Parent and value7:FindFirstChild("HumanoidRootPart")))
+        if root then
+            Humanoid:MoveTo(root.Position)
         else
             Humanoid:MoveTo(HumanoidRootPart.Position)
         end
     end
 end
 
+-- The enemy this is aiming at may already be gone by the time MoveToFinished
+-- fires ("HumanoidRootPart is not a valid member of Model"), so look its root
+-- up rather than indexing it. The second branch below always guarded; the
+-- first, which is the one that fires while walking a path, did not.
+-- (`value3 ~= ni` in the original was a decompiler typo for `nil`; `ni` is an
+-- undefined global, so it happened to compare against nil anyway.)
 local function fn32(a)
     local _, value2, value3, _ = fn23()
+    local root = enemyRoot(value7)
     if value2 ~= nil and value3 ~= nil and a and #tbl2 > value then
         value = value + 1
-        charLookAt(value2, value7.HumanoidRootPart)
+        if root then
+            charLookAt(value2, root)
+        end
         value3:MoveTo(tbl2[value].Position)
-    elseif value2 ~= nil and value3 ~= ni and value7 and value7:FindFirstChild("HumanoidRootPart") then
-        charLookAt(value2, value7.HumanoidRootPart)
+    elseif value2 ~= nil and value3 ~= nil and root then
+        charLookAt(value2, root)
     end
 end
 
 local function fn33(a)
     setAction("path blocked", "")
     local _, value2, _, _ = fn23()
-    if value2 ~= nil and value7 ~= nil then
-        charLookAt(value2, value7.HumanoidRootPart)
+    local root = enemyRoot(value7)
+    if value2 ~= nil and root then
+        charLookAt(value2, root)
     end
     if value < a then
         fn31(destination)
@@ -2646,7 +2677,13 @@ local function fn35(a, b)
     local ok = b ~= nil and b
     local _, value3, value4, value5 = fn23()
     if a.ClassName == "Model" then
-        PathfindingService = roundVector(a.PrimaryPart.Position)
+        -- Same race as fn17/fn32: the destination model can lose its root the
+        -- instant it dies, so there is nothing to walk to.
+        local root = enemyRoot(a) or a.PrimaryPart
+        if not root then
+            return
+        end
+        PathfindingService = roundVector(root.Position)
     else
         PathfindingService = roundVector(a.Position)
     end
@@ -2654,8 +2691,9 @@ local function fn35(a, b)
         result2 = PathfindingService
         destination = PathfindingService
         if ok then
-            if value7 ~= nil then
-                charLookAt(value3, value7.PrimaryPart)
+            local targetRoot = enemyRoot(value7)
+            if targetRoot then
+                charLookAt(value3, targetRoot)
             end
             spawn(fn30)
             value4:MoveTo(PathfindingService)
