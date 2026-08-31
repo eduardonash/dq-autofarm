@@ -203,6 +203,54 @@ farmStatus = {
     startGold = nil,
 }
 
+-- Auto replay teleports you into a fresh server, which tears the script down and
+-- takes the counters with it - and since the game only credits gold when a run
+-- ends, the payout always landed after the panel was already gone. Keep the
+-- session totals in a file so they carry across replays; a gap longer than half
+-- an hour counts as a new session.
+SESSION_FILE = "dq_autofarm_session.json"
+local SESSION_GAP = 1800
+
+function loadSession()
+    if not (readfile and isfile) then
+        return
+    end
+    local ok, data = pcall(function()
+        if not isfile(SESSION_FILE) then
+            return nil
+        end
+        return game:GetService("HttpService"):JSONDecode(readfile(SESSION_FILE))
+    end)
+    if not ok or type(data) ~= "table" then
+        return
+    end
+    if type(data.stamp) ~= "number" or os.time() - data.stamp > SESSION_GAP then
+        return
+    end
+    farmStatus.startGold = tonumber(data.startGold)
+    farmStatus.kills = tonumber(data.kills) or 0
+    farmStatus.sessionStart = tonumber(data.sessionStart)
+end
+
+function saveSession()
+    if not writefile then
+        return
+    end
+    pcall(function()
+        writefile(SESSION_FILE, game:GetService("HttpService"):JSONEncode({
+            startGold = farmStatus.startGold,
+            kills = farmStatus.kills,
+            sessionStart = farmStatus.sessionStart,
+            stamp = os.time(),
+        }))
+    end)
+end
+
+loadSession()
+if not farmStatus.sessionStart then
+    farmStatus.sessionStart = os.time()
+end
+
 -- Gold is only credited at the end of a run, so this is the session total, not
 -- a live counter. Baseline is taken once leaderstats exists.
 function currentGold()
@@ -219,6 +267,7 @@ function goldEarned()
     end
     if not farmStatus.startGold then
         farmStatus.startGold = now
+        saveSession()
     end
     return now - farmStatus.startGold
 end
@@ -323,7 +372,7 @@ do
             local CollectionService = game:GetService("CollectionService")
             local last = {}
             while true do
-                local elapsed = math.floor(tick() - farmStatus.startedAt)
+                local elapsed = os.time() - (farmStatus.sessionStart or os.time())
                 local stats = string.format(
                     "%d alive  ·  %d killed  ·  %02d:%02d",
                     #CollectionService:GetTagged("Enemy"),
@@ -349,6 +398,10 @@ do
                         label.Text = text[key]
                         last[key] = text[key]
                     end
+                end
+                saveTick = (saveTick or 0) + 1
+                if saveTick % 25 == 0 then
+                    saveSession()
                 end
                 wait(0.2)
             end
@@ -2611,22 +2664,34 @@ end
 
 local function fn19(a)
     if a.ClassName == "Model" then
-        while a.PrimaryPart == nil do
-            wait()
+        -- Every wait here used to be unbounded. An enemy killed while this was
+        -- still setting it up leaves PrimaryPart nil for good, so the first loop
+        -- span forever - and because fn20 walks the room's enemies one at a
+        -- time, that one dead mob froze the whole pass before it could register
+        -- any ChildAdded handlers. Nothing got tagged from then on.
+        local waited = 0
+        while a.PrimaryPart == nil and waited < 5 do
+            wait(0.05)
+            waited = waited + 0.05
         end
-        while true do
-            if a:FindFirstChild(a.PrimaryPart.Name) then
-                break
-            end
-            wait()
-        end
-        a:WaitForChild("HumanoidRootPart")
-        a:WaitForChild("enemyStyle", 1.5)
-        if not a:FindFirstChild("enemyStyle") then
-            print("no enemy style")
+        if not a.Parent or a.PrimaryPart == nil then
             return
         end
-        local Value = a.enemyStyle.Value
+        waited = 0
+        while not a:FindFirstChild(a.PrimaryPart.Name) and waited < 5 do
+            wait(0.05)
+            waited = waited + 0.05
+        end
+        if not a.Parent then
+            return
+        end
+        a:WaitForChild("HumanoidRootPart", 5)
+        a:WaitForChild("enemyStyle", 1.5)
+        local styleValue = a.Parent and a:FindFirstChild("enemyStyle")
+        if not styleValue then
+            return
+        end
+        local Value = styleValue.Value
         if Value == "mob" or Value == "ranged" or Value == "melee" or Value == "burly" then
             waitForEnemyTags(a, ok and 1 or 2)
             item4:AddTag(a, "Enemy")
@@ -2682,21 +2747,21 @@ local function fn20()
     else
         local pairs2, dungeon = pairs, workspace.dungeon
         for k2, v2 in pairs2(dungeon.GetChildren(dungeon)) do
-            if v2:FindFirstChild("enemyFolder") then
-                local PathfindingService = v2:FindFirstChild("enemyFolder")
-                if PathfindingService then
-                    local result2 = PathfindingService:FindFirstChildOfClass("Model")
-                    if result2 and result2:FindFirstChild("Humanoid") then
-                        wait(0.5)
-                        local pairs3, value4 = pairs, PathfindingService
-                        for k, v in pairs3(value4.GetChildren(value4)) do
-                            fn19(v)
-                            fn18(v)
-                        end
-                    end
-                    PathfindingService.ChildAdded:Connect(function(a)
-                        fn19(a)
-                        fn18(a)
+            local enemyFolder = v2:FindFirstChild("enemyFolder")
+            if enemyFolder then
+                -- Connect first. This used to come after the pass over the
+                -- enemies already in the room, so a single stuck enemy meant
+                -- the room never got a handler and every later spawn was missed.
+                enemyFolder.ChildAdded:Connect(function(a)
+                    fn19(a)
+                    fn18(a)
+                end)
+                -- And give each existing enemy its own thread, so one that dies
+                -- mid-setup cannot hold up the rest of the room.
+                for _, existing in pairs2(enemyFolder:GetChildren()) do
+                    spawn(function()
+                        fn19(existing)
+                        fn18(existing)
                     end)
                 end
             end
@@ -2939,6 +3004,10 @@ if FindFirstChild(workspace2, "dungeonProgress") then
             end
             spawn(fn28)
             setAction("dungeon finished", "")
+            -- The payout lands as the run ends; bank it before replay teleports
+            -- us out and the panel is rebuilt in the next server.
+            wait(1)
+            saveSession()
             autoReplay()
             wait(0.5)
             game:GetService("ScriptContext"):SetTimeout(0)
@@ -2966,6 +3035,10 @@ elseif workspace:FindFirstChild("raidPorgress") then
             end
             spawn(fn28)
             setAction("dungeon finished", "")
+            -- The payout lands as the run ends; bank it before replay teleports
+            -- us out and the panel is rebuilt in the next server.
+            wait(1)
+            saveSession()
             autoReplay()
             wait(0.5)
             game:GetService("ScriptContext"):SetTimeout(0)
@@ -3721,6 +3794,12 @@ local ok4 = true;
     spawn(function()
         local _, _, _, _ = fn23()
         while not ok2 do
+            -- One error used to kill this thread outright: the marker ball froze
+            -- on the spot ("disconnected"), nothing was chased again, and the
+            -- farm looked dead while every other thread carried on. A target
+            -- dying at the wrong moment is routine, so absorb it and take the
+            -- next iteration instead of losing the loop.
+            local iterationOk, iterationErr = pcall(function()
             local _, _, value54, value55 = fn23()
             local value, value2 = value55, value54
             if value ~= nil and value2 ~= nil and value2.Health > 0 then
@@ -3728,7 +3807,7 @@ local ok4 = true;
                     game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = value17
                 end)
                 local result21, _ = fn43()
-                setAction(farmActionNames[result21] or result21, value7.Name)
+                setAction(farmActionNames[result21] or result21, value7 and value7.Name or "")
                 if result21 == "chase" then
                     local reached = false
                     if _G.teleport_to_enemies and value7.PrimaryPart then
@@ -4024,6 +4103,10 @@ local ok4 = true;
                         end
                     end
                 end
+            end
+            end)
+            if not iterationOk then
+                ScriptDebug("[farm] recovered: " .. tostring(iterationErr))
             end
             if extremelyFast then
                 local RenderStepped3 = game:GetService("RunService")

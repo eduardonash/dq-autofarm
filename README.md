@@ -50,6 +50,11 @@ A small draggable panel sits bottom-left showing what the script is doing right
 now, plus enemies alive, kills, elapsed time and gold earned this session. It
 replaces the original's per-frame console narration, which flooded F9.
 
+Kills, gold and elapsed time carry across auto replay. The game only pays out
+when a run ends, and replay teleports you into a fresh server before that lands,
+so the totals are kept in `dq_autofarm_session.json` and picked back up on the
+other side. A gap of more than half an hour starts a new session.
+
 ## Where to stand
 
 `_G.attack_position` picks how the farm approaches a mob:
