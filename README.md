@@ -37,7 +37,7 @@ laid out as:
 | Page | Sections |
 | --- | --- |
 | farm | dungeon, combat |
-| movement | teleport, dodge |
+| movement | dodge |
 | items | selling, gear |
 | misc | performance, boss raid, webhook |
 | settings | named configs, theming, unload, menu keybind (the library's own) |
@@ -55,31 +55,20 @@ also has the library's named-config manager if you want more than one profile.
 Status lives in the watermark: current action on top, `alive / killed / gold /
 elapsed` underneath.
 
-## Where to stand
-
-`_G.attack_position` picks how the farm approaches a mob:
-
-| Value | |
-| --- | --- |
-| `default` | walk/hop straight at it |
-| `above` | sit `attack_height` studs over its head, on an invisible pad |
-| `below` | same, underneath it |
-| `behind` | come in `attack_distance` studs off its back |
-
-Weapons reach about 13 studs, so a large `attack_height` will park you out of
-range swinging at nothing.
-
 ## Notes
 
 - **Auto replay** teleports you into a fresh reserved server, which kills the
   running script. Put the loader in your executor's autoexec so it comes back up
   on the other side.
-- **Teleporting** is a mode, not a switch. `far` (the default) only teleports to
-  cover distance — past `_G.teleport_min_distance`, which is room-to-room range —
-  and walks anything closer, which is what the melee approach was tuned for.
-  `always` teleports the whole way in, `off` walks everywhere. It hops in short
-  steps and raycasts for floor before each landing; if you get kicked, lower
-  `_G.teleport_step` first.
+- **Approach and attack are the original script's.** Teleport-to-mob and the
+  above/below/behind standing modes were tried and removed: they sat between the
+  AI and the thing that made hits land. The character keeps its momentum while
+  closing the distance, then plants itself — exact facing, velocity zeroed, the
+  way the original did — once the target is in range to swing.
+- **`_G.SemiTeleports` should stay off.** It is the script's own dodge-teleport
+  and it was never enabled in the original settings. With `smallTeleportVal` at
+  100 it flings you up to 100 studs mid-fight, so you never settle beside a mob
+  long enough to damage it.
 - **Instakill** relies on owning the enemy's assembly so a client-side `Health`
   write replicates, which the old build achieved through `SimulationRadius`.
   The script probes once per session and turns the option off by itself, with a

@@ -23,11 +23,12 @@ _G.teleport_min_distance = 20   -- walk under this, teleport over it
 _G.teleport_step = 40           -- max studs per hop (smaller looks less obvious)
 _G.teleport_interval = 0.15     -- seconds between hops
 
--- The script's own short-hop dodge. SemiTeleports was missing from this block,
--- which left it nil and the hop code unreachable.
-_G.SemiTeleports = true
-_G.smallTeleportVal = 100
-_G.teleportDuringBossOnly = false -- if true, only use smallTeleports when its time for a boss
+-- The script's own dodge-teleport. This was NOT in the original settings block,
+-- which left it nil and the hop code unreachable - and that was correct. With it
+-- on, smallTeleportVal (100) flings you up to 100 studs mid-fight, so you never
+-- settle next to a mob long enough to damage it. Off unless you want it.
+_G.SemiTeleports = false
+_G.teleportDuringBossOnly = true -- if true, only use smallTeleports when its time for a boss
 -- Client-side kills do not replicate in this build: the server keeps ownership
 -- of enemies. Leaving this on only desyncs the health the farm reads. The
 -- script probes one enemy and turns it off by itself, but off is the honest

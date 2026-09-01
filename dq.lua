@@ -145,31 +145,6 @@ end
 if type(_G.maxWaitTimeInLobby) ~= "number" then
     _G.maxWaitTimeInLobby = 15
 end
--- Where to stand while attacking. "default" walks straight at the mob; "above"
--- and "below" park you off its hitbox on a hover pad; "behind" comes in from
--- its back. Anything past ~13 studs is out of weapon reach, so keep the offsets
--- small or you will hover there swinging at nothing.
-if _G.attack_position == nil then
-    _G.attack_position = "default"
-end
-if type(_G.attack_height) ~= "number" then
-    -- Measured on a live weapon: the hit volume sits (0, 2.24, 1.24) from the
-    -- root and is 7.14 long, so aimed at the target it reaches about 6 studs.
-    -- The old default of 10 parked you past that - swinging, connecting with
-    -- nothing.
-    _G.attack_height = 4
-end
-if type(_G.attack_distance) ~= "number" then
-    _G.attack_distance = 8
-end
-if _G.teleport_mode == nil then
-    _G.teleport_mode = (_G.teleport_to_enemies == false) and "off" or "far"
-end
-if type(_G.teleport_min_distance) ~= "number" then
-    -- 35 meant walking the last 35 studs of every approach, which is most of a
-    -- room and much slower than the old behaviour of teleporting straight in.
-    _G.teleport_min_distance = 20
-end
 
 function isLobbyPlace()
     return game.PlaceId == LOBBY_PLACE_ID or game.PlaceId == LOBBY_100_PLACE_ID
@@ -421,15 +396,6 @@ if Library then
 
         combat:Toggle({ Name = "auto attack", Flag = "auto_attack",
             Default = _G.auto_attack ~= false, Callback = bind("auto_attack") })
-        combat:Dropdown({ Name = "stand", Flag = "attack_position",
-            Items = { "default", "above", "below", "behind" }, Multi = false,
-            Default = _G.attack_position or "default", Callback = bind("attack_position") })
-        combat:Slider({ Name = "height offset", Flag = "attack_height",
-            Min = 1, Max = 6, Default = _G.attack_height or 4, Decimals = 0.5, Suffix = "st",
-            Callback = bind("attack_height") })
-        combat:Slider({ Name = "attack distance", Flag = "attack_distance",
-            Min = 1, Max = 13, Default = _G.attack_distance or 8, Decimals = 1, Suffix = "st",
-            Callback = bind("attack_distance") })
         combat:Toggle({ Name = "instakill", Flag = "doInstakill",
             Default = _G.doInstakill or false, Callback = bind("doInstakill") })
         combat:Toggle({ Name = "ignore ability range", Flag = "ignoreAbilityRange",
@@ -438,23 +404,8 @@ if Library then
             Default = _G.optimize_mobs or false, Callback = bind("optimize_mobs") })
     end
 
-    do -- movement
-        local teleport = MovementPage:Section({ Name = "teleport", Side = 1 })
-
-        teleport:Dropdown({ Name = "mode", Flag = "teleport_mode",
-            Items = { "off", "far", "always" }, Multi = false,
-            Default = _G.teleport_mode or "far", Callback = bind("teleport_mode") })
-        teleport:Slider({ Name = "teleport past", Flag = "teleport_min_distance",
-            Min = 10, Max = 200, Default = _G.teleport_min_distance or 20, Decimals = 1, Suffix = "st",
-            Callback = bind("teleport_min_distance") })
-        teleport:Slider({ Name = "studs per hop", Flag = "teleport_step",
-            Min = 5, Max = 100, Default = _G.teleport_step or 40, Decimals = 1, Suffix = "st",
-            Callback = bind("teleport_step") })
-        teleport:Slider({ Name = "seconds per hop", Flag = "teleport_interval",
-            Min = 0.05, Max = 1, Default = _G.teleport_interval or 0.15, Decimals = 0.01, Suffix = "s",
-            Callback = bind("teleport_interval") })
-
-        local dodge = MovementPage:Section({ Name = "dodge", Side = 2 })
+    do -- movement (the script's own short-hop dodge - original code, not mine)
+        local dodge = MovementPage:Section({ Name = "dodge", Side = 1 })
 
         dodge:Toggle({ Name = "short dodge hops", Flag = "SemiTeleports",
             Default = _G.SemiTeleports or false, Callback = bind("SemiTeleports") })
@@ -672,187 +623,6 @@ function autoReplay()
     if not ok then
         ScriptDebug("[replay] replayDungeon call failed")
     end
-end
-
--- ============================================================================
--- Teleporting.
--- Hops toward a destination in short steps instead of one long jump, and only
--- lands where there is actually floor - a straight-line jump across a dungeon
--- drops you through the map. Falls back to walking (returns false) whenever it
--- cannot find ground, so movement degrades instead of breaking.
--- ============================================================================
-local lastTeleportAt = 0
-local hoverPad = nil
-
--- Standing above or below a mob means there is no floor to land on, so the
--- teleporter carries its own: one invisible anchored pad kept under your feet.
-local function ensureHoverPad(position)
-    if not hoverPad or not hoverPad.Parent then
-        hoverPad = Instance.new("Part")
-        hoverPad.Name = "dqHoverPad"
-        hoverPad.Size = Vector3.new(8, 1, 8)
-        hoverPad.Anchored = true
-        hoverPad.CanCollide = true
-        hoverPad.Transparency = 1
-        hoverPad.Parent = workspace
-        pcall(function()
-            game:GetService("CollectionService"):AddTag(hoverPad, "RayIgnore")
-        end)
-    end
-    hoverPad.Position = position - Vector3.new(0, 3.5, 0)
-end
-
-function clearHoverPad()
-    if hoverPad then
-        hoverPad:Destroy()
-        hoverPad = nil
-    end
-    -- A pad left behind by an earlier run is not in our `hoverPad` upvalue, but
-    -- it is still solid and still under someone's feet.
-    for _, part in ipairs(workspace:GetChildren()) do
-        if part.Name == "dqHoverPad" then
-            part:Destroy()
-        end
-    end
-end
-
-clearHoverPad()
-
--- Where to stand relative to the enemy, per _G.attack_position.
--- Returns the position plus whether it needs a hover pad to stand on.
-function attackAnchor(model)
-    local root = enemyRoot(model)
-    if not root then
-        return nil, false
-    end
-    local position = root.Position
-    local mode = _G.attack_position or "default"
-    local height = tonumber(_G.attack_height) or 10
-    if mode == "above" then
-        return position + Vector3.new(0, height, 0), true
-    elseif mode == "below" then
-        return position - Vector3.new(0, height, 0), true
-    elseif mode == "behind" then
-        local distance = tonumber(_G.attack_distance) or 8
-        return position - root.CFrame.LookVector * distance, false
-    end
-    return position, false
-end
-
--- above/below put you off the mob's own level, which you cannot walk to and
--- cannot hit without tipping the rig towards it.
-function attackModeIsOffset()
-    local mode = _G.attack_position
-    return mode == "above" or mode == "below"
-end
-
--- Held every tick while hovering: the Humanoid keeps trying to right itself, so
--- the pitch has to be re-applied rather than set once.
-function holdAimAt(model)
-    local character = game:GetService("Players").LocalPlayer.Character
-    local root = enemyRoot(model)
-    if not (character and root) then
-        return
-    end
-    charLookAt(character, root, true)
-end
-
--- Teleport is a mode, not a switch:
---   "off"    never teleport, walk everything
---   "far"    only close distance with it - past teleport_min_distance, which is
---            room-to-room range. Inside that you walk, which looks far better
---            and is what the melee approach was tuned for.
---   "always" teleport the whole way in
-function shouldTeleportTo(model)
-    local mode = _G.teleport_mode
-    if mode == nil then
-        -- Back-compat with the old boolean.
-        mode = (_G.teleport_to_enemies == false) and "off" or "far"
-    end
-    if mode == "off" then
-        return false
-    end
-    local root = enemyRoot(model)
-    local character = game:GetService("Players").LocalPlayer.Character
-    local here = character and character:FindFirstChild("HumanoidRootPart")
-    if not (root and here) then
-        return false
-    end
-    if mode == "always" then
-        return true
-    end
-    return (root.Position - here.Position).Magnitude > (tonumber(_G.teleport_min_distance) or 35)
-end
-
-function teleportToward(destination, stopDistance, hover)
-    if not destination then
-        return false
-    end
-    local character = game:GetService("Players").LocalPlayer.Character
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-    if not root then
-        return false
-    end
-    stopDistance = stopDistance or 10
-    local from = root.Position
-    local delta = destination - from
-    local distance = delta.Magnitude
-    if distance <= stopDistance then
-        if hover then
-            -- Already in position. Hold the pad and report the move as handled -
-            -- returning false here handed the frame to the walker, which walked
-            -- straight off the pad and back down to the floor.
-            ensureHoverPad(root.Position)
-            return true
-        end
-        return false
-    end
-    local now = tick()
-    if now - lastTeleportAt < (_G.teleport_interval or 0.15) then
-        -- Rate limited, but still the teleporter's turn: hold position rather
-        -- than handing the frame back to the walker and fighting over it.
-        return true
-    end
-
-    local step = math.min(_G.teleport_step or 40, distance - stopDistance)
-    local goal = from + delta.Unit * step
-    local landing
-
-    if hover then
-        landing = goal
-        ensureHoverPad(landing)
-    else
-        -- The script builds its own invisible collision walls, and they are
-        -- solid, so this used to land you on the roof of one: stranded a dozen
-        -- studs up, out of reach of everything, with the AI dodging forever
-        -- because it could never close. Skip past our own parts to real floor.
-        local params = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Exclude
-        local ignore = { character, hoverPad }
-        local ground
-        for _ = 1, 8 do
-            params.FilterDescendantsInstances = ignore
-            ground = workspace:Raycast(goal + Vector3.new(0, 12, 0), Vector3.new(0, -60, 0), params)
-            if not ground then
-                break
-            end
-            if ground.Instance.Name ~= result3 then
-                break
-            end
-            table.insert(ignore, ground.Instance)
-            ground = nil
-        end
-        if not ground then
-            return false
-        end
-        landing = ground.Position + Vector3.new(0, 3, 0)
-    end
-
-    lastTeleportAt = now
-    local velocity = root.AssemblyLinearVelocity
-    root.CFrame = CFrame.new(landing, Vector3.new(destination.X, landing.Y, destination.Z))
-    root.AssemblyLinearVelocity = velocity
-    return true
 end
 
 -- The old build let its own server scripts CollectionService-tag every enemy,
@@ -2913,12 +2683,37 @@ end
 -- studs/s with the same MoveTo loop and no re-seating - the "tapping forward"
 -- crawl. Now it turns the root part only, restores the velocity it was carrying,
 -- and skips corrections too small to see.
--- `pitch` aims in full 3D instead of flattening to the character's own height.
--- The weapon's hit volume is welded to the rig, so it only ever covers what the
--- character faces: aiming flat while standing over a mob points the weapon out
--- across its head and every swing misses. Pitching tips the whole rig - head
--- down - and brings the hit volume onto the target.
-function charLookAt(a, b, pitch)
+-- Two behaviours, because travelling and fighting want opposite things.
+--
+-- The original planted the character on every call: SetPrimaryPartCFrame forces
+-- exact facing and zeroes the assembly's velocity, so you stop dead, aimed at
+-- the mob. That is why its melee connected - and also why chasing crawled at
+-- 4.2 studs/s instead of 19.9, since the humanoid re-accelerated from nothing
+-- every frame.
+--
+-- So: keep the velocity while closing the distance, and plant exactly like the
+-- original once the target is close enough to hit. Carrying momentum into a
+-- swing was letting the weapon drift off the mob before the server evaluated
+-- it, which is why enemies took several passes to die.
+local ATTACK_RANGE = 13
+
+function inAttackRange(character, target)
+    if not (character and target) then
+        return false
+    end
+    local root = character.PrimaryPart or character:FindFirstChild("HumanoidRootPart")
+    local targetRoot = target:IsA("Model") and (target.PrimaryPart or target:FindFirstChild("HumanoidRootPart")) or target
+    if not (root and targetRoot) then
+        return false
+    end
+    local reach = ATTACK_RANGE
+    if targetRoot:IsA("BasePart") then
+        reach = reach + targetRoot.Size.Z / 2
+    end
+    return (targetRoot.Position - root.Position).Magnitude < reach
+end
+
+function charLookAt(a, b)
     if not (a and b and b.Position) then
         return
     end
@@ -2927,17 +2722,29 @@ function charLookAt(a, b, pitch)
         return
     end
     local position = root.Position
-    local flat = pitch and b.Position
-        or Vector3.new(b.Position.X, position.Y, b.Position.Z)
+    local flat = Vector3.new(b.Position.X, position.Y, b.Position.Z)
     local delta = flat - position
     if delta.Magnitude < 0.05 then
         return
     end
+    local facing = CFrame.new(position, flat)
+
+    if inAttackRange(a, b) then
+        -- Original behaviour, and only here: aim exactly and stand still.
+        if a.SetPrimaryPartCFrame and a.PrimaryPart then
+            a:SetPrimaryPartCFrame(facing)
+        else
+            root.CFrame = facing
+            root.AssemblyLinearVelocity = Vector3.new()
+        end
+        return
+    end
+
     if root.CFrame.LookVector:Dot(delta.Unit) > 0.9995 then
         return
     end
     local velocity = root.AssemblyLinearVelocity
-    root.CFrame = CFrame.new(position, flat)
+    root.CFrame = facing
     root.AssemblyLinearVelocity = velocity
 end
 
@@ -3606,45 +3413,14 @@ local ok4 = true;
                     game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = value17
                 end)
                 local result21, _ = fn43()
-                -- Only a hover mode is allowed to keep the pad. Clearing it only
-                -- in the chase branch meant that once the AI started dodging the
-                -- player stayed stranded on it, above the mobs and out of reach,
-                -- which kept it dodging - it never got back down.
-                if not attackModeIsOffset() then
-                    clearHoverPad()
-                end
                 setAction(farmActionNames[result21] or result21, value7 and value7.Name or "")
                 if result21 == "chase" then
-                    local reached = false
-                    local anchor, needsPad = attackAnchor(value7)
-                    -- An above/below anchor is in mid-air, so it always has to be
-                    -- placed - there is no walking to it. Gating this behind
-                    -- shouldTeleportTo meant that in "far" mode the anchor was
-                    -- thrown away the moment you got within fighting range, and
-                    -- the mode quietly collapsed back to standing on the floor.
-                    if anchor and (needsPad or shouldTeleportTo(value7)) then
-                        reached = teleportToward(
-                            anchor,
-                            tonumber(_G.attack_distance) or 10,
-                            needsPad
-                        )
-                        if reached then
-                            setAction(needsPad and (_G.attack_position .. " target") or "teleporting to", value7.Name)
-                        end
+                    local _, value56 = rayCast(value.CFrame, value7.PrimaryPart.CFrame, "RayWhitelist", true)
+                    value8 = value56
+                    if value8 == nil then
+                        fn35(value7, true)
                     else
-                        clearHoverPad()
-                    end
-                    if needsPad then
-                        holdAimAt(value7)
-                    end
-                    if not reached then
-                        local _, value56 = rayCast(value.CFrame, value7.PrimaryPart.CFrame, "RayWhitelist", true)
-                        value8 = value56
-                        if value8 == nil then
-                            fn35(value7, true)
-                        else
-                            fn35(value7)
-                        end
+                        fn35(value7)
                     end
                 elseif result21 == "chase_objective" then
                     if value10 ~= nil and value10.ClassName == "Model" then
