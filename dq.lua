@@ -159,6 +159,11 @@ end
 if type(_G.teleport_interval) ~= "number" then
     _G.teleport_interval = 0.2
 end
+-- Radius of the "keep away" ring placed around each enemy. This is what stops
+-- the AI walking into a mob and standing there; 0 disables it.
+if type(_G.enemy_spacing) ~= "number" then
+    _G.enemy_spacing = 7
+end
 
 function isLobbyPlace()
     return game.PlaceId == LOBBY_PLACE_ID or game.PlaceId == LOBBY_100_PLACE_ID
@@ -410,6 +415,9 @@ if Library then
 
         combat:Toggle({ Name = "auto attack", Flag = "auto_attack",
             Default = _G.auto_attack ~= false, Callback = bind("auto_attack") })
+        combat:Slider({ Name = "spacing from mobs", Flag = "enemy_spacing",
+            Min = 0, Max = 14, Default = _G.enemy_spacing or 7, Decimals = 0.5, Suffix = "st",
+            Callback = bind("enemy_spacing") })
         combat:Toggle({ Name = "instakill", Flag = "doInstakill",
             Default = _G.doInstakill or false, Callback = bind("doInstakill") })
         combat:Toggle({ Name = "ignore ability range", Flag = "ignoreAbilityRange",
@@ -2189,20 +2197,24 @@ local function fn17(a, b, c)
         return
     end
     if c == nil then
-        -- DELIBERATELY EMPTY. Do not "repair" this.
+        -- These offsets ARE the spacing. fn16 names each part "enemyRadius" and
+        -- fn36 treats that name as a hazard, so the ring is what makes the AI
+        -- keep its distance instead of standing inside the mob.
         --
-        -- The decompiler dropped this table's SETLIST, and I once reconstructed
-        -- the 3x3 ring it originally held. That was faithful to the bytecode and
-        -- completely wrong for this script: fn16 names every part it makes
-        -- "enemyRadius", and fn36 treats anything called that as a hazard. So a
-        -- reconstructed ring puts eight danger volumes around every enemy - with
-        -- a room of 18, well over a hundred of them - checkAroundPlayer then
-        -- almost never finds a safe cell, the AI returns "dodge" forever, never
-        -- closes to attack, and you stand in the open taking hits until you die.
-        --
-        -- Empty is what the working script has always done: fn17(enemy, 7) is a
-        -- no-op for normal enemies, and the AI is free to chase and kill.
+        -- Only the four offsets below survived the decompile ({b,b}, {0,b},
+        -- {b,0}, {0,-b}); I once "completed" them into a full 3x3 of eight. That
+        -- was too much: with eighteen mobs in a room the grid never found a safe
+        -- cell, so the AI dodged forever and never attacked. Four is what the
+        -- bytecode actually kept. _G.enemy_spacing tunes the radius - raise it to
+        -- stand further off, set it to 0 to disable spacing entirely.
+        local spacing = tonumber(_G.enemy_spacing)
+        if spacing == nil then
+            spacing = b
+        end
         local tbl = {}
+        if spacing > 0 then
+            tbl = { { spacing, spacing }, { 0, spacing }, { spacing, 0 }, { 0, -spacing } }
+        end
         for k, v in pairs(tbl) do
             -- Building the ring yields, and the enemy can die partway through it.
             if not a.Parent or not a.PrimaryPart then
