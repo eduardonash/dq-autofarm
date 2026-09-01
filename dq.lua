@@ -158,6 +158,12 @@ end
 if type(_G.attack_distance) ~= "number" then
     _G.attack_distance = 8
 end
+if _G.teleport_mode == nil then
+    _G.teleport_mode = (_G.teleport_to_enemies == false) and "off" or "far"
+end
+if type(_G.teleport_min_distance) ~= "number" then
+    _G.teleport_min_distance = 35
+end
 
 function isLobbyPlace()
     return game.PlaceId == LOBBY_PLACE_ID or game.PlaceId == LOBBY_100_PLACE_ID
@@ -294,613 +300,313 @@ function setAction(action, target)
     farmStatus.target = target or ""
 end
 
+-- ============================================================================
+-- Interface (Radiance, vendored at dq-autofarm/Library.lua).
+--
+-- Every control's Flag is named after the _G key it drives, and its callback
+-- writes straight back into _G - so the farm keeps reading _G exactly as it
+-- always has, and a control moved in the menu takes effect on the next tick.
+--
+-- Load order matters: the settings block above the loadstring fills _G, the
+-- controls are built with those values as their defaults, and then the saved
+-- config is applied on top. That has to happen here, near the top, because the
+-- rest of the script reads _G as it loads.
+--
+-- Menu key is Right Shift (rebindable on the settings page the library adds).
+-- ============================================================================
+LIBRARY_URL = "https://raw.githubusercontent.com/eduardonash/dq-autofarm/main/Library.lua"
+UI_CONFIG_PATH = "Radiance/Configs/dq_autofarm.json"
+
+local Library
 do
-    local labels
-    local function build()
-        local parent
-        if gethui then
-            local ok, hidden = pcall(gethui)
-            if ok then
-                parent = hidden
-            end
-        end
-        parent = parent or game:GetService("CoreGui")
-
-        -- Re-running the script should replace the panel, not stack another one.
-        for _, existing in ipairs(parent:GetChildren()) do
-            if existing.Name == "dqStatus" then
-                existing:Destroy()
-            end
-        end
-
-        local gui = Instance.new("ScreenGui")
-        gui.Name = "dqStatus"
-        gui.ResetOnSpawn = false
-        gui.IgnoreGuiInset = true
-        gui.DisplayOrder = 999
-
-        local frame = Instance.new("Frame")
-        -- Bottom left: the game's own portrait/HP/EXP panel owns the top left.
-        frame.Size = UDim2.new(0, 250, 0, 110)
-        frame.AnchorPoint = Vector2.new(0, 1)
-        frame.Position = UDim2.new(0, 12, 1, -12)
-        frame.BackgroundColor3 = Color3.fromRGB(16, 17, 22)
-        frame.BackgroundTransparency = 0.15
-        frame.BorderSizePixel = 0
-        frame.Active = true
-        frame.Draggable = true
-        frame.Parent = gui
-
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 8)
-        corner.Parent = frame
-
-        local stroke = Instance.new("UIStroke")
-        stroke.Color = Color3.fromRGB(70, 95, 145)
-        stroke.Thickness = 1
-        stroke.Transparency = 0.35
-        stroke.Parent = frame
-
-        local function newLabel(y, height, size, colour, bold)
-            local label = Instance.new("TextLabel")
-            label.BackgroundTransparency = 1
-            label.Position = UDim2.new(0, 12, 0, y)
-            label.Size = UDim2.new(1, -24, 0, height)
-            label.Font = bold and Enum.Font.GothamBold or Enum.Font.Gotham
-            label.TextSize = size
-            label.TextColor3 = colour
-            label.TextXAlignment = Enum.TextXAlignment.Left
-            label.TextTruncate = Enum.TextTruncate.AtEnd
-            label.Text = ""
-            label.Parent = frame
-            return label
-        end
-
-        labels = {
-            title = newLabel(9, 15, 12, Color3.fromRGB(126, 162, 224), true),
-            action = newLabel(28, 20, 15, Color3.fromRGB(240, 242, 248), true),
-            target = newLabel(48, 16, 12, Color3.fromRGB(168, 176, 196)),
-            stats = newLabel(70, 15, 11, Color3.fromRGB(120, 128, 148)),
-            gold = newLabel(87, 15, 11, Color3.fromRGB(214, 178, 96)),
-        }
-        gui.Parent = parent
-        return true
-    end
-
-    if pcall(build) and labels then
-        spawn(function()
-            local CollectionService = game:GetService("CollectionService")
-            local last = {}
-            while true do
-                local elapsed = os.time() - (farmStatus.sessionStart or os.time())
-                local stats = string.format(
-                    "%d alive  ·  %d killed  ·  %02d:%02d",
-                    #CollectionService:GetTagged("Enemy"),
-                    farmStatus.kills,
-                    math.floor(elapsed / 60),
-                    elapsed % 60
-                )
-                local earned = goldEarned()
-                local gold = (earned >= 0 and "+" or "") .. formatNumber(earned) .. " gold this session"
-                local title = "DQ AUTOFARM"
-                if farmStatus.dungeon ~= "" then
-                    title = title .. "  ·  " .. string.upper(farmStatus.dungeon)
-                end
-                local text = {
-                    title = title,
-                    action = farmStatus.action,
-                    target = farmStatus.target,
-                    stats = stats,
-                    gold = gold,
-                }
-                for key, label in pairs(labels) do
-                    if last[key] ~= text[key] then
-                        label.Text = text[key]
-                        last[key] = text[key]
-                    end
-                end
-                saveTick = (saveTick or 0) + 1
-                if saveTick % 25 == 0 then
-                    saveSession()
-                end
-                wait(0.2)
-            end
-        end)
+    local ok, result = pcall(function()
+        return loadstring(game:HttpGet(LIBRARY_URL))()
+    end)
+    if ok then
+        Library = result
+    else
+        -- The farm is the point; the menu is not. Carry on headless.
+        warn("[DQ] UI library unavailable, running without a menu: " .. tostring(result))
     end
 end
 
--- ============================================================================
--- Config panel.
--- Everything the script reads out of _G, grouped into sections you can switch
--- off as a unit. Changes apply immediately and are saved to disk, so they
--- survive the teleport into the next dungeon; the settings block above the
--- loadstring only supplies the starting values on a fresh install.
--- Toggle it with Right Shift.
--- ============================================================================
-CONFIG_FILE = "dq_autofarm_config.json"
+-- Applied by every control. Debounced so dragging a slider writes once, not
+-- once per pixel.
+local savePending = false
+local function scheduleSave()
+    if not (Library and writefile) or savePending then
+        return
+    end
+    savePending = true
+    spawn(function()
+        wait(1)
+        savePending = false
+        pcall(function()
+            if makefolder then
+                if isfolder and not isfolder("Radiance") then
+                    makefolder("Radiance")
+                end
+                if isfolder and not isfolder("Radiance/Configs") then
+                    makefolder("Radiance/Configs")
+                end
+            end
+            writefile(UI_CONFIG_PATH, Library:GetConfig())
+        end)
+    end)
+end
 
-configSchema = {
-    {
-        name = "Dungeon",
-        master = "auto_join_dungeon",
-        options = {
-            { key = "auto_choose_dungeon_and_difficulty", label = "Pick for my level", kind = "bool" },
-            { key = "dungeon", label = "Dungeon", kind = "list", choices = {
-                "(auto)", "Desert Temple", "Winter Outpost", "Pirate Island", "King's Castle",
+-- Controls bind to _G by name. `transform` exists for the settings the script
+-- wants as something other than the raw widget value.
+local function bind(key, transform)
+    return function(value)
+        _G[key] = transform and transform(value) or value
+        scheduleSave()
+    end
+end
+
+if Library then
+    local Window = Library:Window({
+        Name = 'dungeon quest <font color="rgb(126, 192, 255)">autofarm</font>',
+        Rank = "farm",
+    })
+
+    farmWatermark = Window:Watermark({
+        Name = "dungeon quest autofarm",
+        SubName = "loading",
+    })
+
+    local FarmPage = Window:Page({ Name = "farm" })
+    local MovementPage = Window:Page({ Name = "movement" })
+    local ItemsPage = Window:Page({ Name = "items" })
+    local MiscPage = Window:Page({ Name = "misc" })
+
+    do -- farm
+        local dungeon = FarmPage:Section({ Name = "dungeon", Side = 1 })
+
+        dungeon:Toggle({ Name = "auto join", Flag = "auto_join_dungeon",
+            Default = _G.auto_join_dungeon or false, Callback = bind("auto_join_dungeon") })
+        dungeon:Toggle({ Name = "pick for my level", Flag = "auto_choose_dungeon_and_difficulty",
+            Default = _G.auto_choose_dungeon_and_difficulty or false,
+            Callback = bind("auto_choose_dungeon_and_difficulty") })
+        dungeon:Dropdown({ Name = "dungeon", Flag = "dungeon",
+            Items = {
+                "Desert Temple", "Winter Outpost", "Pirate Island", "King's Castle",
                 "The Underworld", "Samurai Palace", "The Canals", "Ghastly Harbor",
                 "Steampunk Sewers", "Orbital Outpost", "Volcanic Chambers", "Aquatic Temple",
                 "Enchanted Forest", "Northern Lands", "Gilded Skies", "Oni Dungeon",
-            } },
-            { key = "difficulty", label = "Difficulty", kind = "list", choices = {
-                "(auto)", "Easy", "Medium", "Hard", "Insane", "Nightmare",
-            } },
-            { key = "hardcore", label = "Hardcore", kind = "bool" },
-            { key = "wavedefense", label = "Wave defence", kind = "bool" },
-            { key = "auto_replay", label = "Auto replay", kind = "bool" },
-            { key = "auto_replay_delay", label = "Replay delay (s)", kind = "number" },
-        },
-    },
-    {
-        name = "Combat",
-        master = "auto_attack",
-        options = {
-            { key = "attack_position", label = "Stand", kind = "list", choices = {
-                "default", "above", "below", "behind",
-            }, help = "where to sit relative to the mob" },
-            { key = "attack_height", label = "Height offset", kind = "number", help = "studs above/below" },
-            { key = "attack_distance", label = "Attack distance", kind = "number", help = "how close to get" },
-            { key = "doInstakill", label = "Instakill", kind = "bool" },
-            { key = "ignoreAbilityRange", label = "Ignore ability range", kind = "bool" },
-            { key = "optimize_mobs", label = "Optimize mobs", kind = "bool" },
-        },
-    },
-    {
-        name = "Teleporting",
-        master = "teleport_to_enemies",
-        options = {
-            { key = "teleport_step", label = "Studs per hop", kind = "number" },
-            { key = "teleport_interval", label = "Seconds per hop", kind = "number" },
-            { key = "teleport_stop_distance", label = "Stop distance", kind = "number" },
-            { key = "SemiTeleports", label = "Short dodge hops", kind = "bool" },
-            { key = "teleportDuringBossOnly", label = "Hops on boss only", kind = "bool" },
-        },
-    },
-    {
-        name = "Boss raid",
-        master = "boss_raid",
-        options = {
-            { key = "auto_choose_raid_boss_tier", label = "Pick highest tier", kind = "bool" },
-            { key = "boss_raid_tier", label = "Tier", kind = "number" },
-        },
-    },
-    {
-        name = "Selling",
-        master = "autosell",
-        options = {
-            { key = "testSell", label = "Dry run (print only)", kind = "bool" },
-            { key = "keep_items_level_requirement", label = "Keep above level", kind = "number" },
-            { key = "keep2spells", label = "Keep 2 spells", kind = "bool" },
-        },
-    },
-    {
-        name = "Gear",
-        options = {
-            { key = "auto_equip_gear", label = "Auto equip gear", kind = "bool" },
-            { key = "equip_type", label = "Equip type", kind = "list", choices = { "physical", "spell" } },
-            { key = "auto_upgrade_equip", label = "Auto upgrade", kind = "bool" },
-            { key = "autoEquipSpell", label = "Auto equip spell", kind = "bool" },
-            { key = "spellType", label = "Spell type", kind = "list", choices = { "physical", "spell" } },
-            { key = "auto_stat_upgrade", label = "Auto spend points", kind = "bool" },
-            { key = "stat", label = "Stat", kind = "list", choices = {
-                "physicalPower", "spellPower", "stamina",
-            } },
-        },
-    },
-    {
-        name = "Performance",
-        master = "fpsBoost",
-        options = {
-            { key = "destroy_map", label = "Strip map decoration", kind = "bool" },
-            { key = "hide_projectiles", label = "Hide projectiles", kind = "bool" },
-            { key = "del_armor", label = "Delete armor models", kind = "bool" },
-            { key = "del_weapon", label = "Delete weapon models", kind = "bool" },
-            { key = "wall_transparency", label = "Wall transparency", kind = "number" },
-            { key = "loadSlow", label = "Build walls slowly", kind = "bool" },
-            { key = "extremelyFast", label = "Think every frame", kind = "bool" },
-        },
-    },
-    {
-        name = "Visuals",
-        options = {
-            { key = "showTarget", label = "Highlight target", kind = "bool" },
-            { key = "showPath", label = "Show path", kind = "bool" },
-        },
-    },
-    {
-        name = "Webhook",
-        master = "webhookEnabled",
-        options = {
-            { key = "webhookLink", label = "URL", kind = "text" },
-        },
-    },
-}
+            },
+            Multi = false, Default = _G.dungeon or "Desert Temple",
+            Callback = bind("dungeon") })
+        dungeon:Dropdown({ Name = "difficulty", Flag = "difficulty",
+            Items = { "Easy", "Medium", "Hard", "Insane", "Nightmare" },
+            Multi = false, Default = _G.difficulty or "Nightmare",
+            Callback = bind("difficulty") })
+        dungeon:Toggle({ Name = "hardcore", Flag = "hardcore",
+            Default = _G.hardcore or false, Callback = bind("hardcore") })
+        dungeon:Toggle({ Name = "wave defence", Flag = "wavedefense",
+            Default = _G.wavedefense or false, Callback = bind("wavedefense") })
+        dungeon:Toggle({ Name = "auto replay", Flag = "auto_replay",
+            Default = _G.auto_replay or false, Callback = bind("auto_replay") })
+        dungeon:Slider({ Name = "replay delay", Flag = "auto_replay_delay",
+            Min = 0, Max = 15, Default = _G.auto_replay_delay or 3, Decimals = 1, Suffix = "s",
+            Callback = bind("auto_replay_delay") })
 
-function saveConfig()
-    if not writefile then
-        return false
-    end
-    local data = {}
-    for _, section in ipairs(configSchema) do
-        if section.master then
-            data[section.master] = _G[section.master]
-        end
-        for _, option in ipairs(section.options) do
-            data[option.key] = _G[option.key]
-        end
-    end
-    local ok = pcall(function()
-        writefile(CONFIG_FILE, game:GetService("HttpService"):JSONEncode(data))
-    end)
-    return ok
-end
+        local combat = FarmPage:Section({ Name = "combat", Side = 2 })
 
-function loadSavedConfig()
-    if not (readfile and isfile) then
-        return false
-    end
-    local ok, data = pcall(function()
-        if not isfile(CONFIG_FILE) then
-            return nil
-        end
-        return game:GetService("HttpService"):JSONDecode(readfile(CONFIG_FILE))
-    end)
-    if not ok or type(data) ~= "table" then
-        return false
-    end
-    for key, value in pairs(data) do
-        _G[key] = value
-    end
-    return true
-end
-
-loadSavedConfig()
-
-do
-    local UserInputService = game:GetService("UserInputService")
-
-    local COLOURS = {
-        bg = Color3.fromRGB(16, 17, 22),
-        row = Color3.fromRGB(24, 26, 33),
-        header = Color3.fromRGB(28, 31, 42),
-        accent = Color3.fromRGB(94, 140, 214),
-        on = Color3.fromRGB(72, 158, 106),
-        off = Color3.fromRGB(72, 76, 88),
-        text = Color3.fromRGB(236, 239, 246),
-        dim = Color3.fromRGB(140, 148, 168),
-    }
-
-    local function corner(parent, radius)
-        local object = Instance.new("UICorner")
-        object.CornerRadius = UDim.new(0, radius or 6)
-        object.Parent = parent
-        return object
+        combat:Toggle({ Name = "auto attack", Flag = "auto_attack",
+            Default = _G.auto_attack ~= false, Callback = bind("auto_attack") })
+        combat:Dropdown({ Name = "stand", Flag = "attack_position",
+            Items = { "default", "above", "below", "behind" }, Multi = false,
+            Default = _G.attack_position or "default", Callback = bind("attack_position") })
+        combat:Slider({ Name = "height offset", Flag = "attack_height",
+            Min = 0, Max = 13, Default = _G.attack_height or 10, Decimals = 1, Suffix = "st",
+            Callback = bind("attack_height") })
+        combat:Slider({ Name = "attack distance", Flag = "attack_distance",
+            Min = 1, Max = 13, Default = _G.attack_distance or 8, Decimals = 1, Suffix = "st",
+            Callback = bind("attack_distance") })
+        combat:Toggle({ Name = "instakill", Flag = "doInstakill",
+            Default = _G.doInstakill or false, Callback = bind("doInstakill") })
+        combat:Toggle({ Name = "ignore ability range", Flag = "ignoreAbilityRange",
+            Default = _G.ignoreAbilityRange or false, Callback = bind("ignoreAbilityRange") })
+        combat:Toggle({ Name = "optimize mobs", Flag = "optimize_mobs",
+            Default = _G.optimize_mobs or false, Callback = bind("optimize_mobs") })
     end
 
-    local function label(parent, text, size, colour, bold)
-        local object = Instance.new("TextLabel")
-        object.BackgroundTransparency = 1
-        object.Font = bold and Enum.Font.GothamBold or Enum.Font.Gotham
-        object.TextSize = size
-        object.TextColor3 = colour
-        object.TextXAlignment = Enum.TextXAlignment.Left
-        object.TextTruncate = Enum.TextTruncate.AtEnd
-        object.Text = text
-        object.Parent = parent
-        return object
+    do -- movement
+        local teleport = MovementPage:Section({ Name = "teleport", Side = 1 })
+
+        teleport:Dropdown({ Name = "mode", Flag = "teleport_mode",
+            Items = { "off", "far", "always" }, Multi = false,
+            Default = _G.teleport_mode or "far", Callback = bind("teleport_mode") })
+        teleport:Slider({ Name = "teleport past", Flag = "teleport_min_distance",
+            Min = 10, Max = 200, Default = _G.teleport_min_distance or 35, Decimals = 1, Suffix = "st",
+            Callback = bind("teleport_min_distance") })
+        teleport:Slider({ Name = "studs per hop", Flag = "teleport_step",
+            Min = 5, Max = 100, Default = _G.teleport_step or 40, Decimals = 1, Suffix = "st",
+            Callback = bind("teleport_step") })
+        teleport:Slider({ Name = "seconds per hop", Flag = "teleport_interval",
+            Min = 0.05, Max = 1, Default = _G.teleport_interval or 0.15, Decimals = 0.01, Suffix = "s",
+            Callback = bind("teleport_interval") })
+
+        local dodge = MovementPage:Section({ Name = "dodge", Side = 2 })
+
+        dodge:Toggle({ Name = "short dodge hops", Flag = "SemiTeleports",
+            Default = _G.SemiTeleports or false, Callback = bind("SemiTeleports") })
+        dodge:Toggle({ Name = "hops on boss only", Flag = "teleportDuringBossOnly",
+            Default = _G.teleportDuringBossOnly or false, Callback = bind("teleportDuringBossOnly") })
     end
 
-    local function build()
-        local parent
-        if gethui then
-            local ok, hidden = pcall(gethui)
-            if ok then
-                parent = hidden
-            end
-        end
-        parent = parent or game:GetService("CoreGui")
-        for _, existing in ipairs(parent:GetChildren()) do
-            if existing.Name == "dqConfig" then
-                existing:Destroy()
-            end
-        end
+    do -- items
+        local selling = ItemsPage:Section({ Name = "selling", Side = 1 })
 
-        local gui = Instance.new("ScreenGui")
-        gui.Name = "dqConfig"
-        gui.ResetOnSpawn = false
-        gui.IgnoreGuiInset = true
-        gui.DisplayOrder = 1000
+        selling:Toggle({ Name = "autosell", Flag = "autosell",
+            Default = _G.autosell or false, Callback = bind("autosell") })
+        selling:Toggle({ Name = "dry run", Flag = "testSell",
+            Default = _G.testSell or false, Callback = bind("testSell") })
+        selling:Slider({ Name = "keep above level", Flag = "keep_items_level_requirement",
+            Min = 0, Max = 200, Default = _G.keep_items_level_requirement or 156, Decimals = 1,
+            Callback = bind("keep_items_level_requirement") })
+        selling:Toggle({ Name = "keep 2 spells", Flag = "keep2spells",
+            Default = _G.keep2spells or false, Callback = bind("keep2spells") })
 
-        local window = Instance.new("Frame")
-        window.Size = UDim2.new(0, 430, 0, 520)
-        window.Position = UDim2.new(0.5, -215, 0.5, -260)
-        window.BackgroundColor3 = COLOURS.bg
-        window.BorderSizePixel = 0
-        window.Active = true
-        window.Draggable = true
-        window.Parent = gui
-        corner(window, 10)
+        local gear = ItemsPage:Section({ Name = "gear", Side = 2 })
 
-        local stroke = Instance.new("UIStroke")
-        stroke.Color = COLOURS.accent
-        stroke.Transparency = 0.55
-        stroke.Parent = window
+        gear:Toggle({ Name = "auto equip gear", Flag = "auto_equip_gear",
+            Default = _G.auto_equip_gear or false, Callback = bind("auto_equip_gear") })
+        gear:Dropdown({ Name = "equip type", Flag = "equip_type",
+            Items = { "physical", "spell" }, Multi = false,
+            Default = _G.equip_type or "physical", Callback = bind("equip_type") })
+        gear:Toggle({ Name = "auto upgrade", Flag = "auto_upgrade_equip",
+            Default = _G.auto_upgrade_equip or false, Callback = bind("auto_upgrade_equip") })
+        gear:Toggle({ Name = "auto equip spell", Flag = "autoEquipSpell",
+            Default = _G.autoEquipSpell or false, Callback = bind("autoEquipSpell") })
+        gear:Dropdown({ Name = "spell type", Flag = "spellType",
+            Items = { "physical", "spell" }, Multi = false,
+            Default = _G.spellType or "spell", Callback = bind("spellType") })
+        gear:Toggle({ Name = "auto spend points", Flag = "auto_stat_upgrade",
+            Default = _G.auto_stat_upgrade or false, Callback = bind("auto_stat_upgrade") })
+        gear:Dropdown({ Name = "stat", Flag = "stat",
+            Items = { "physicalPower", "spellPower", "stamina" }, Multi = false,
+            Default = _G.stat or "physicalPower", Callback = bind("stat") })
+    end
 
-        local title = label(window, "DQ AUTOFARM  ·  CONFIG", 13, COLOURS.accent, true)
-        title.Position = UDim2.new(0, 16, 0, 14)
-        title.Size = UDim2.new(1, -140, 0, 16)
+    do -- misc
+        local performance = MiscPage:Section({ Name = "performance", Side = 1 })
 
-        local hint = label(window, "Right Shift to hide", 11, COLOURS.dim)
-        hint.Position = UDim2.new(1, -170, 0, 15)
-        hint.Size = UDim2.new(0, 110, 0, 14)
-        hint.TextXAlignment = Enum.TextXAlignment.Right
-
-        local saveButton = Instance.new("TextButton")
-        saveButton.Size = UDim2.new(0, 46, 0, 20)
-        saveButton.Position = UDim2.new(1, -58, 0, 12)
-        saveButton.BackgroundColor3 = COLOURS.accent
-        saveButton.Text = "SAVE"
-        saveButton.Font = Enum.Font.GothamBold
-        saveButton.TextSize = 11
-        saveButton.TextColor3 = COLOURS.text
-        saveButton.AutoButtonColor = true
-        saveButton.Parent = window
-        corner(saveButton, 5)
-
-        local body = Instance.new("ScrollingFrame")
-        body.Size = UDim2.new(1, -20, 1, -50)
-        body.Position = UDim2.new(0, 10, 0, 40)
-        body.BackgroundTransparency = 1
-        body.BorderSizePixel = 0
-        body.ScrollBarThickness = 4
-        body.ScrollBarImageColor3 = COLOURS.accent
-        body.CanvasSize = UDim2.new(0, 0, 0, 0)
-        body.AutomaticCanvasSize = Enum.AutomaticSize.Y
-        body.Parent = window
-
-        local list = Instance.new("UIListLayout")
-        list.Padding = UDim.new(0, 5)
-        list.SortOrder = Enum.SortOrder.LayoutOrder
-        list.Parent = body
-
-        -- One dropdown overlay reused by every list control.
-        local menu = Instance.new("ScrollingFrame")
-        menu.Size = UDim2.new(0, 190, 0, 150)
-        menu.BackgroundColor3 = COLOURS.header
-        menu.BorderSizePixel = 0
-        menu.ScrollBarThickness = 3
-        menu.Visible = false
-        menu.ZIndex = 20
-        menu.Parent = window
-        corner(menu, 6)
-        local menuList = Instance.new("UIListLayout")
-        menuList.Parent = menu
-
-        local function openMenu(control, choices, onPick)
-            for _, child in ipairs(menu:GetChildren()) do
-                if child:IsA("TextButton") then
-                    child:Destroy()
+        performance:Toggle({ Name = "fps boost", Flag = "fpsBoost",
+            Default = _G.fpsBoost or false, Callback = function(value)
+                _G.fpsBoost = value
+                scheduleSave()
+                -- One-shot by nature: switching it on has to re-run the pass.
+                if value and fpsBoost then
+                    spawn(fpsBoost)
                 end
-            end
-            local absolute = control.AbsolutePosition - window.AbsolutePosition
-            menu.Position = UDim2.new(0, absolute.X - 40, 0, absolute.Y + 24)
-            menu.CanvasSize = UDim2.new(0, 0, 0, #choices * 24)
-            menu.Size = UDim2.new(0, 190, 0, math.min(150, #choices * 24))
-            for index, choice in ipairs(choices) do
-                local item = Instance.new("TextButton")
-                item.Size = UDim2.new(1, 0, 0, 24)
-                item.BackgroundTransparency = 1
-                item.Text = "  " .. choice
-                item.Font = Enum.Font.Gotham
-                item.TextSize = 12
-                item.TextColor3 = COLOURS.text
-                item.TextXAlignment = Enum.TextXAlignment.Left
-                item.LayoutOrder = index
-                item.ZIndex = 21
-                item.Parent = menu
-                item.MouseButton1Click:Connect(function()
-                    menu.Visible = false
-                    onPick(choice)
-                end)
-            end
-            menu.Visible = true
-        end
-
-        local rowControls = {}
-
-        local function addRow(section, option, order)
-            local row = Instance.new("Frame")
-            row.Size = UDim2.new(1, -6, 0, 28)
-            row.BackgroundColor3 = COLOURS.row
-            row.BorderSizePixel = 0
-            row.LayoutOrder = order
-            row.Parent = body
-            corner(row, 5)
-
-            local text = option.label
-            if option.help then
-                text = text .. "  (" .. option.help .. ")"
-            end
-            local name = label(row, text, 12, COLOURS.text)
-            name.Position = UDim2.new(0, 12, 0, 0)
-            name.Size = UDim2.new(1, -170, 1, 0)
-
-            local control
-            if option.kind == "bool" then
-                control = Instance.new("TextButton")
-                control.Size = UDim2.new(0, 52, 0, 18)
-                control.Position = UDim2.new(1, -64, 0.5, -9)
-                control.Font = Enum.Font.GothamBold
-                control.TextSize = 10
-                control.TextColor3 = COLOURS.text
-                control.BorderSizePixel = 0
-                control.Parent = row
-                corner(control, 9)
-                local function refresh()
-                    local on = _G[option.key] and true or false
-                    control.Text = on and "ON" or "OFF"
-                    control.BackgroundColor3 = on and COLOURS.on or COLOURS.off
-                end
-                control.MouseButton1Click:Connect(function()
-                    _G[option.key] = not _G[option.key]
-                    refresh()
-                end)
-                refresh()
-            elseif option.kind == "list" then
-                control = Instance.new("TextButton")
-                control.Size = UDim2.new(0, 132, 0, 20)
-                control.Position = UDim2.new(1, -144, 0.5, -10)
-                control.BackgroundColor3 = COLOURS.header
-                control.Font = Enum.Font.Gotham
-                control.TextSize = 11
-                control.TextColor3 = COLOURS.text
-                control.BorderSizePixel = 0
-                control.Parent = row
-                corner(control, 5)
-                local function refresh()
-                    local value = _G[option.key]
-                    control.Text = (value == nil and "(auto)" or tostring(value)) .. "   v"
-                end
-                control.MouseButton1Click:Connect(function()
-                    openMenu(control, option.choices, function(choice)
-                        _G[option.key] = (choice == "(auto)") and nil or choice
-                        refresh()
-                    end)
-                end)
-                refresh()
-            else
-                control = Instance.new("TextBox")
-                control.Size = UDim2.new(0, 132, 0, 20)
-                control.Position = UDim2.new(1, -144, 0.5, -10)
-                control.BackgroundColor3 = COLOURS.header
-                control.Font = Enum.Font.Gotham
-                control.TextSize = 11
-                control.TextColor3 = COLOURS.text
-                control.ClearTextOnFocus = false
-                control.BorderSizePixel = 0
-                control.Text = tostring(_G[option.key] == nil and "" or _G[option.key])
-                control.Parent = row
-                corner(control, 5)
-                control.FocusLost:Connect(function()
-                    if option.kind == "number" then
-                        local number = tonumber(control.Text)
-                        if number then
-                            _G[option.key] = number
-                        else
-                            control.Text = tostring(_G[option.key] or "")
-                        end
-                    else
-                        _G[option.key] = control.Text ~= "" and control.Text or nil
-                    end
-                end)
-            end
-
-            rowControls[#rowControls + 1] = { section = section, row = row, control = control, name = name }
-        end
-
-        local order = 0
-        local sectionRows = {}
-
-        for _, section in ipairs(configSchema) do
-            order = order + 1
-            local header = Instance.new("Frame")
-            header.Size = UDim2.new(1, -6, 0, 30)
-            header.BackgroundColor3 = COLOURS.header
-            header.BorderSizePixel = 0
-            header.LayoutOrder = order
-            header.Parent = body
-            corner(header, 5)
-
-            local heading = label(header, string.upper(section.name), 12, COLOURS.accent, true)
-            heading.Position = UDim2.new(0, 12, 0, 0)
-            heading.Size = UDim2.new(1, -90, 1, 0)
-
-            if section.master then
-                local toggle = Instance.new("TextButton")
-                toggle.Size = UDim2.new(0, 52, 0, 18)
-                toggle.Position = UDim2.new(1, -64, 0.5, -9)
-                toggle.Font = Enum.Font.GothamBold
-                toggle.TextSize = 10
-                toggle.TextColor3 = COLOURS.text
-                toggle.BorderSizePixel = 0
-                toggle.Parent = header
-                corner(toggle, 9)
-                sectionRows[section.name] = toggle
-
-                local function refresh()
-                    local on = _G[section.master] and true or false
-                    toggle.Text = on and "ON" or "OFF"
-                    toggle.BackgroundColor3 = on and COLOURS.on or COLOURS.off
-                    for _, entry in ipairs(rowControls) do
-                        if entry.section == section then
-                            entry.control.Active = on
-                            if entry.control:IsA("TextButton") then
-                                entry.control.AutoButtonColor = on
-                            elseif entry.control:IsA("TextBox") then
-                                -- TextBox has no AutoButtonColor; setting it threw
-                                -- and took the whole panel down with it.
-                                entry.control.TextEditable = on
-                            end
-                            entry.name.TextColor3 = on and COLOURS.text or COLOURS.dim
-                            entry.row.BackgroundTransparency = on and 0 or 0.5
+            end })
+        performance:Toggle({ Name = "strip map decoration", Flag = "destroy_map",
+            Default = _G.destroy_map or false, Callback = bind("destroy_map") })
+        performance:Toggle({ Name = "hide projectiles", Flag = "hide_projectiles",
+            Default = _G.hide_projectiles or false, Callback = bind("hide_projectiles") })
+        performance:Toggle({ Name = "delete armor models", Flag = "del_armor",
+            Default = _G.del_armor or false, Callback = bind("del_armor") })
+        performance:Toggle({ Name = "delete weapon models", Flag = "del_weapon",
+            Default = _G.del_weapon or false, Callback = bind("del_weapon") })
+        performance:Slider({ Name = "wall transparency", Flag = "wall_transparency",
+            Min = 0, Max = 1, Default = _G.wall_transparency or 1, Decimals = 0.05,
+            Callback = function(value)
+                _G.wall_transparency = value
+                scheduleSave()
+                -- Retint the walls already standing, not just future ones.
+                pcall(function()
+                    for _, part in ipairs(workspace:GetChildren()) do
+                        if part:IsA("BasePart") and part.Name == result3 then
+                            part.Transparency = value
                         end
                     end
-                end
-                toggle.MouseButton1Click:Connect(function()
-                    _G[section.master] = not _G[section.master]
-                    refresh()
                 end)
-                section.refreshMaster = refresh
-            end
+            end })
+        performance:Toggle({ Name = "build walls slowly", Flag = "loadSlow",
+            Default = _G.loadSlow or false, Callback = bind("loadSlow") })
+        performance:Toggle({ Name = "think every frame", Flag = "extremelyFast",
+            Default = _G.extremelyFast or false, Callback = bind("extremelyFast") })
 
-            for _, option in ipairs(section.options) do
-                order = order + 1
-                addRow(section, option, order)
-            end
-        end
+        local raid = MiscPage:Section({ Name = "boss raid", Side = 2 })
 
-        for _, section in ipairs(configSchema) do
-            if section.refreshMaster then
-                section.refreshMaster()
-            end
-        end
+        raid:Toggle({ Name = "boss raid", Flag = "boss_raid",
+            Default = _G.boss_raid or false, Callback = bind("boss_raid") })
+        raid:Toggle({ Name = "pick highest tier", Flag = "auto_choose_raid_boss_tier",
+            Default = _G.auto_choose_raid_boss_tier or false,
+            Callback = bind("auto_choose_raid_boss_tier") })
+        raid:Slider({ Name = "tier", Flag = "boss_raid_tier",
+            Min = 1, Max = 12, Default = _G.boss_raid_tier or 1, Decimals = 1,
+            Callback = bind("boss_raid_tier") })
 
-        saveButton.MouseButton1Click:Connect(function()
-            local saved = saveConfig()
-            saveButton.Text = saved and "SAVED" or "NO FS"
-            delay(1.4, function()
-                saveButton.Text = "SAVE"
-            end)
-        end)
+        local webhook = MiscPage:Section({ Name = "webhook", Side = 2 })
 
-        -- Open on a fresh install so the panel is discoverable, then stay out
-        -- of the way once there are saved settings.
-        window.Visible = not (isfile and pcall(isfile, CONFIG_FILE) and isfile(CONFIG_FILE))
-        gui.Parent = parent
-
-        UserInputService.InputBegan:Connect(function(input, processed)
-            if processed then
-                return
-            end
-            if input.KeyCode == Enum.KeyCode.RightShift then
-                window.Visible = not window.Visible
-                menu.Visible = false
-            end
-        end)
+        webhook:Toggle({ Name = "enabled", Flag = "webhookEnabled",
+            Default = _G.webhookEnabled or false, Callback = bind("webhookEnabled") })
+        webhook:Textbox({ Name = "url", Flag = "webhookLink",
+            Numeric = false, Finished = true, Placeholder = "discord webhook",
+            Default = _G.webhookLink or "",
+            Callback = bind("webhookLink", function(value)
+                return value ~= "" and value or nil
+            end) })
     end
 
-    pcall(build)
+    Window:InitWindow()
+
+    -- Saved settings win over the block above the loadstring. LoadConfig drives
+    -- the library's own SetFlags, which fire the callbacks above, so this also
+    -- writes every value back into _G.
+    if isfile and readfile and isfile(UI_CONFIG_PATH) then
+        local ok, err = pcall(function()
+            Library:LoadConfig(readfile(UI_CONFIG_PATH))
+        end)
+        if not ok then
+            warn("[DQ] could not load saved config: " .. tostring(err))
+        end
+    end
 end
 
+-- Status: current action on the watermark, running totals underneath.
+spawn(function()
+    local CollectionService = game:GetService("CollectionService")
+    local lastText, lastSub, saveTick = nil, nil, 0
+    while true do
+        local elapsed = os.time() - (farmStatus.sessionStart or os.time())
+        local earned = goldEarned()
+        local text = farmStatus.action
+        if farmStatus.target ~= "" then
+            text = text .. " " .. farmStatus.target
+        end
+        if farmStatus.dungeon ~= "" then
+            text = farmStatus.dungeon .. "  |  " .. text
+        end
+        local sub = string.format(
+            "%d alive  |  %d killed  |  %s%s gold  |  %02d:%02d",
+            #CollectionService:GetTagged("Enemy"),
+            farmStatus.kills,
+            earned >= 0 and "+" or "",
+            formatNumber(earned),
+            math.floor(elapsed / 60),
+            elapsed % 60
+        )
+        if farmWatermark then
+            if text ~= lastText then
+                pcall(function() farmWatermark:SetText(text) end)
+                lastText = text
+            end
+            if sub ~= lastSub then
+                pcall(function() farmWatermark:SetSubText(sub) end)
+                lastSub = sub
+            end
+        end
+        saveTick = saveTick + 1
+        if saveTick % 25 == 0 then
+            saveSession()
+        end
+        wait(0.2)
+    end
+end)
 
 -- ============================================================================
 -- Auto replay.
@@ -1016,6 +722,33 @@ function attackAnchor(model)
         return position - root.CFrame.LookVector * distance, false
     end
     return position, false
+end
+
+-- Teleport is a mode, not a switch:
+--   "off"    never teleport, walk everything
+--   "far"    only close distance with it - past teleport_min_distance, which is
+--            room-to-room range. Inside that you walk, which looks far better
+--            and is what the melee approach was tuned for.
+--   "always" teleport the whole way in
+function shouldTeleportTo(model)
+    local mode = _G.teleport_mode
+    if mode == nil then
+        -- Back-compat with the old boolean.
+        mode = (_G.teleport_to_enemies == false) and "off" or "far"
+    end
+    if mode == "off" then
+        return false
+    end
+    local root = enemyRoot(model)
+    local character = game:GetService("Players").LocalPlayer.Character
+    local here = character and character:FindFirstChild("HumanoidRootPart")
+    if not (root and here) then
+        return false
+    end
+    if mode == "always" then
+        return true
+    end
+    return (root.Position - here.Position).Magnitude > (tonumber(_G.teleport_min_distance) or 35)
 end
 
 function teleportToward(destination, stopDistance, hover)
@@ -1201,7 +934,9 @@ function isBossRaidPlace()
 end
 
 local Players3 = game:GetService("Players")
-local _, value13, value14, value15, value16, extremelyFast, value17, item, item2, ok8, humanoid, ok10, ok = Players3.LocalPlayer, 1, 15, 2, 5, _G.extremelyFast, 31, tbl3[3], tbl3[4], false, true, false, false
+-- `extremelyFast` used to be captured here, so the menu could never change it.
+-- It is a live _G read at each use site now.
+local _, value13, value14, value15, value16, value17, item, item2, ok8, humanoid, ok10, ok = Players3.LocalPlayer, 1, 15, 2, 5, 31, tbl3[3], tbl3[4], false, true, false, false
 local ok11 = humanoid2 and 0.5 or value13
 local ok2, ok3 = false, false
 -- These were unconditional assignments, which silently overrode whatever the
@@ -3072,7 +2807,7 @@ local function fn29()
             break
         end
         setAction("waiting for enemies", "")
-        if extremelyFast then
+        if _G.extremelyFast then
             local RenderStepped = game:GetService("RunService")
             RenderStepped = RenderStepped.RenderStepped
             RenderStepped:wait()
@@ -3101,7 +2836,7 @@ local function fn29()
             value14 = value12
             break
         end
-        if extremelyFast then
+        if _G.extremelyFast then
             local RenderStepped2 = game:GetService("RunService")
             RenderStepped2 = RenderStepped2.RenderStepped
             RenderStepped2:wait()
@@ -3774,10 +3509,13 @@ end
 -- replicates. The old build claimed that ownership by pushing SimulationRadius
 -- to infinity; keep doing that (plus the executor's own setter, which some
 -- builds honour) but no longer assume it took - tryInstakill probes the result.
-if _G.doInstakill then
+do
     local RenderStepped = game:GetService("RunService")
     RenderStepped = RenderStepped.RenderStepped
     RenderStepped:connect(function()
+        if not _G.doInstakill then
+            return
+        end
         local LocalPlayer = game:GetService("Players").LocalPlayer
         if setsimulationradius then
             pcall(setsimulationradius, math.huge, math.huge)
@@ -3810,12 +3548,12 @@ local ok4 = true;
                 setAction(farmActionNames[result21] or result21, value7 and value7.Name or "")
                 if result21 == "chase" then
                     local reached = false
-                    if _G.teleport_to_enemies and value7.PrimaryPart then
+                    if shouldTeleportTo(value7) then
                         local anchor, needsPad = attackAnchor(value7)
                         if anchor then
                             reached = teleportToward(
                                 anchor,
-                                tonumber(_G.attack_distance) or tonumber(_G.teleport_stop_distance) or 10,
+                                tonumber(_G.attack_distance) or 10,
                                 needsPad
                             )
                         end
@@ -4011,7 +3749,7 @@ local ok4 = true;
                         end
                         fn41()
                         fn40()
-                        if extremelyFast then
+                        if _G.extremelyFast then
                             local RenderStepped = game:GetService("RunService")
                             RenderStepped = RenderStepped.RenderStepped
                             RenderStepped:wait()
@@ -4094,7 +3832,7 @@ local ok4 = true;
                             break
                         end
                         fn42()
-                        if extremelyFast then
+                        if _G.extremelyFast then
                             local RenderStepped2 = game:GetService("RunService")
                             RenderStepped2 = RenderStepped2.RenderStepped
                             RenderStepped2:wait()
@@ -4108,7 +3846,7 @@ local ok4 = true;
             if not iterationOk then
                 ScriptDebug("[farm] recovered: " .. tostring(iterationErr))
             end
-            if extremelyFast then
+            if _G.extremelyFast then
                 local RenderStepped3 = game:GetService("RunService")
                 RenderStepped3 = RenderStepped3.RenderStepped
                 RenderStepped3:wait()
@@ -4127,6 +3865,10 @@ local function fn44()
         wait()
     end
     while not ok2 do
+        if not _G.auto_attack then
+            wait(0.2)
+            continue
+        end
         if _G.ignoreAbilityRange then
             local RenderStepped = game:GetService("RunService")
             RenderStepped = RenderStepped.RenderStepped
@@ -4166,10 +3908,16 @@ local function fn45()
     end
 end
 
-if _G.auto_attack then
-    spawn(fn44)
+-- These loops used to be spawned only if auto_attack was on at load, so the
+-- menu toggle did nothing either way. They always run now and check per tick.
+spawn(fn44)
+do
     spawn(function()
         while not ok2 do
+            if not _G.auto_attack then
+                wait(0.2)
+                continue
+            end
             local PathfindingService, value = fn45()
             cooldown = value
             sword = PathfindingService

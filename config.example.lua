@@ -1,4 +1,8 @@
--- Dungeon Quest autofarm settings. Load this BEFORE pasted.fixed.lua.
+-- Dungeon Quest autofarm settings.
+--
+-- These are the values used the FIRST time you run the script. After that the
+-- in-game menu (Right Shift) writes Radiance/Configs/dq_autofarm.json, and that
+-- file wins over this block. Delete it to come back to these.
 -- Where to stand while attacking
 -- "default" walks straight at the mob, "above"/"below" park you off its hitbox
 -- on an invisible pad, "behind" comes in from its back. Weapons only reach
@@ -9,10 +13,15 @@ _G.attack_height = 10           -- studs above/below the mob
 _G.attack_distance = 8          -- how close to get before attacking
 
 -- Teleporting
-_G.teleport_to_enemies = true   -- hop to the target enemy instead of walking to it
+-- "off"    walk everywhere
+-- "far"    only teleport to cover distance - past teleport_min_distance, which
+--          is room-to-room range. Closer than that it walks, which looks better
+--          and is what the melee approach was tuned for.
+-- "always" teleport the whole way in
+_G.teleport_mode = "far"
+_G.teleport_min_distance = 35   -- walk under this, teleport over it
 _G.teleport_step = 40           -- max studs per hop (smaller looks less obvious)
 _G.teleport_interval = 0.15     -- seconds between hops
-_G.teleport_stop_distance = 10  -- stop hopping once this close, then walk/attack
 
 -- The script's own short-hop dodge. SemiTeleports was missing from this block,
 -- which left it nil and the hop code unreachable.

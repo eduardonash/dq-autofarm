@@ -28,32 +28,32 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/eduardonash/dq-autofa
 `config.example.lua` is a complete, ready-to-paste settings block with the
 loader line already at the bottom.
 
-## Config panel
+## Menu
 
-Press **Right Shift** for a panel with every setting laid out in sections, each
-with its own on/off switch that greys out and disables the whole group.
-Dropdowns for the picky ones (dungeon, difficulty, where to stand, which stat),
-switches for the flags, boxes for the numbers.
+Press **Right Shift**. The interface is the Radiance library (vendored here as
+`Library.lua`, from sametexe001/sametlibs, unmodified so it can be re-synced),
+laid out as:
 
-Changes apply the moment you make them. **Save** writes them to
-`dq_autofarm_config.json` in your executor's workspace folder, and they are
-loaded back on the next run — including after auto replay teleports you into a
-fresh server. Once that file exists it wins over the settings block above the
-loadstring, so the block is really just the starting point on a fresh install.
-Delete the file to go back to it.
+| Page | Sections |
+| --- | --- |
+| farm | dungeon, combat |
+| movement | teleport, dodge |
+| items | selling, gear |
+| misc | performance, boss raid, webhook |
+| settings | named configs, theming, unload, menu keybind (the library's own) |
 
-The panel opens by itself the first time, then stays hidden.
+Every control's flag is named after the `_G` key it drives and writes straight
+into it, so a change takes effect on the next tick rather than needing a reload.
 
-## Status panel
+**Settings save themselves.** Any change is written to
+`Radiance/Configs/dq_autofarm.json` a second later, and loaded back on the next
+run — including after auto replay teleports you into a fresh server. That file
+wins over the settings block above the loadstring, which is only the starting
+point on a fresh install; delete it to go back to the block. The settings page
+also has the library's named-config manager if you want more than one profile.
 
-A small draggable panel sits bottom-left showing what the script is doing right
-now, plus enemies alive, kills, elapsed time and gold earned this session. It
-replaces the original's per-frame console narration, which flooded F9.
-
-Kills, gold and elapsed time carry across auto replay. The game only pays out
-when a run ends, and replay teleports you into a fresh server before that lands,
-so the totals are kept in `dq_autofarm_session.json` and picked back up on the
-other side. A gap of more than half an hour starts a new session.
+Status lives in the watermark: current action on top, `alive / killed / gold /
+elapsed` underneath.
 
 ## Where to stand
 
@@ -74,8 +74,12 @@ range swinging at nothing.
 - **Auto replay** teleports you into a fresh reserved server, which kills the
   running script. Put the loader in your executor's autoexec so it comes back up
   on the other side.
-- **Teleporting** hops in short steps and raycasts for floor before each landing.
-  If you get kicked, lower `_G.teleport_step` first.
+- **Teleporting** is a mode, not a switch. `far` (the default) only teleports to
+  cover distance — past `_G.teleport_min_distance`, which is room-to-room range —
+  and walks anything closer, which is what the melee approach was tuned for.
+  `always` teleports the whole way in, `off` walks everywhere. It hops in short
+  steps and raycasts for floor before each landing; if you get kicked, lower
+  `_G.teleport_step` first.
 - **Instakill** relies on owning the enemy's assembly so a client-side `Health`
   write replicates, which the old build achieved through `SimulationRadius`.
   The script probes once per session and turns the option off by itself, with a
