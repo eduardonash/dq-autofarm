@@ -167,11 +167,13 @@ end
 -- Whether the script's own map-fix walls physically block. Off: they still serve
 -- as line-of-sight raycast targets, but cannot eject you when their recorded
 -- position overlaps this build's walkable ground.
-if _G.solid_walls == nil then
-    -- Solid by default, which is the original behaviour. Turning them off does
-    -- stop the ejection, but measured with them off the character walked off the
-    -- map: Y down to -190 before the game hauled it back 190 studs. A 31 stud
-    -- shove is the lesser problem, so this stays on unless you choose otherwise.
+-- Deliberately NOT a menu control, and deliberately not read from the saved
+-- config. Turning it off stops the map-fix walls ejecting you, but measured with
+-- it off the character walked straight off the map - Y to -190. A value that can
+-- drop you into the void must not be able to persist itself into the next run,
+-- which is exactly what happened when it lived in the autosaving menu.
+-- Set it in the settings block above the loadstring if you really want it off.
+if _G.solid_walls ~= false then
     _G.solid_walls = true
 end
 -- Radius of the "keep away" ring placed around each enemy. This is what stops
@@ -550,8 +552,6 @@ if Library then
                     end
                 end)
             end })
-        performance:Toggle({ Name = "solid walls", Flag = "solid_walls",
-            Default = _G.solid_walls == true, Callback = bind("solid_walls") })
         performance:Toggle({ Name = "build walls slowly", Flag = "loadSlow",
             Default = _G.loadSlow or false, Callback = bind("loadSlow") })
         performance:Toggle({ Name = "think every frame", Flag = "extremelyFast",
