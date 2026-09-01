@@ -153,7 +153,11 @@ if _G.attack_position == nil then
     _G.attack_position = "default"
 end
 if type(_G.attack_height) ~= "number" then
-    _G.attack_height = 10
+    -- Measured on a live weapon: the hit volume sits (0, 2.24, 1.24) from the
+    -- root and is 7.14 long, so aimed at the target it reaches about 6 studs.
+    -- The old default of 10 parked you past that - swinging, connecting with
+    -- nothing.
+    _G.attack_height = 4
 end
 if type(_G.attack_distance) ~= "number" then
     _G.attack_distance = 8
@@ -162,7 +166,9 @@ if _G.teleport_mode == nil then
     _G.teleport_mode = (_G.teleport_to_enemies == false) and "off" or "far"
 end
 if type(_G.teleport_min_distance) ~= "number" then
-    _G.teleport_min_distance = 35
+    -- 35 meant walking the last 35 studs of every approach, which is most of a
+    -- room and much slower than the old behaviour of teleporting straight in.
+    _G.teleport_min_distance = 20
 end
 
 function isLobbyPlace()
@@ -419,7 +425,7 @@ if Library then
             Items = { "default", "above", "below", "behind" }, Multi = false,
             Default = _G.attack_position or "default", Callback = bind("attack_position") })
         combat:Slider({ Name = "height offset", Flag = "attack_height",
-            Min = 0, Max = 13, Default = _G.attack_height or 10, Decimals = 1, Suffix = "st",
+            Min = 1, Max = 6, Default = _G.attack_height or 4, Decimals = 0.5, Suffix = "st",
             Callback = bind("attack_height") })
         combat:Slider({ Name = "attack distance", Flag = "attack_distance",
             Min = 1, Max = 13, Default = _G.attack_distance or 8, Decimals = 1, Suffix = "st",
@@ -439,7 +445,7 @@ if Library then
             Items = { "off", "far", "always" }, Multi = false,
             Default = _G.teleport_mode or "far", Callback = bind("teleport_mode") })
         teleport:Slider({ Name = "teleport past", Flag = "teleport_min_distance",
-            Min = 10, Max = 200, Default = _G.teleport_min_distance or 35, Decimals = 1, Suffix = "st",
+            Min = 10, Max = 200, Default = _G.teleport_min_distance or 20, Decimals = 1, Suffix = "st",
             Callback = bind("teleport_min_distance") })
         teleport:Slider({ Name = "studs per hop", Flag = "teleport_step",
             Min = 5, Max = 100, Default = _G.teleport_step or 40, Decimals = 1, Suffix = "st",
@@ -724,6 +730,24 @@ function attackAnchor(model)
     return position, false
 end
 
+-- above/below put you off the mob's own level, which you cannot walk to and
+-- cannot hit without tipping the rig towards it.
+function attackModeIsOffset()
+    local mode = _G.attack_position
+    return mode == "above" or mode == "below"
+end
+
+-- Held every tick while hovering: the Humanoid keeps trying to right itself, so
+-- the pitch has to be re-applied rather than set once.
+function holdAimAt(model)
+    local character = game:GetService("Players").LocalPlayer.Character
+    local root = enemyRoot(model)
+    if not (character and root) then
+        return
+    end
+    charLookAt(character, root, true)
+end
+
 -- Teleport is a mode, not a switch:
 --   "off"    never teleport, walk everything
 --   "far"    only close distance with it - past teleport_min_distance, which is
@@ -766,8 +790,11 @@ function teleportToward(destination, stopDistance, hover)
     local distance = delta.Magnitude
     if distance <= stopDistance then
         if hover then
-            -- Already in position: hold the pad there so you do not drop off it.
+            -- Already in position. Hold the pad and report the move as handled -
+            -- returning false here handed the frame to the walker, which walked
+            -- straight off the pad and back down to the floor.
             ensureHoverPad(root.Position)
+            return true
         end
         return false
     end
@@ -818,6 +845,19 @@ end
 local instakillConfirmed = nil
 local instakillProbeClaimed = false
 
+-- Instakill only works if this client owns the enemy's assembly, so that a
+-- client-side Health write replicates. It does not in this build.
+--
+-- The previous probe asked the wrong question. It only concluded "did not
+-- replicate" when it saw Health climb back above zero - but the server never
+-- sends a correction, because from its side nothing happened. The local value
+-- just stayed at the zero we wrote, so the probe fell through, released its
+-- claim, and re-probed on the next enemy forever, zeroing the whole room's
+-- health client-side while never reaching a verdict. The farm was then swinging
+-- at mobs it believed were already dead.
+--
+-- The model still existing afterwards is the real signal: an enemy that dies
+-- gets removed. So exactly one enemy is ever touched until that is settled.
 function tryInstakill(model)
     if instakillConfirmed == false then
         return
@@ -826,41 +866,31 @@ function tryInstakill(model)
     if not humanoid or humanoid.Health <= 0 then
         return
     end
-    -- Exactly one enemy runs the probe. Claim it synchronously - every enemy in
-    -- the room spawns at once, so checking inside the coroutine let a dozen of
-    -- them race and report contradictory verdicts.
-    local isProbe = false
-    if instakillConfirmed == nil and not instakillProbeClaimed then
-        instakillProbeClaimed = true
-        isProbe = true
-    end
-    spawn(function()
-        for _ = 1, 12 do
-            if not humanoid.Parent or not model.Parent then
-                break
-            end
-            humanoid.Health = 0
-            wait(0.1)
-        end
-        if not isProbe then
+
+    if instakillConfirmed == nil then
+        if instakillProbeClaimed then
+            -- Untested: leave every other enemy's health alone.
             return
         end
-        -- A reverted Health is the unambiguous answer: the server re-asserted it,
-        -- so our write never left this client. Disappearing is not proof on its
-        -- own (the farm may simply have killed it), so only trust the revert.
-        wait(1.5)
-        if model.Parent ~= nil and humanoid.Health > 0 then
-            instakillConfirmed = false
-            _G.doInstakill = false
-            notify("Instakill unavailable",
-                "The server keeps ownership of enemies in this build, so client-side kills do not replicate. Disabled so the farm keeps tracking real health.")
-        elseif model.Parent == nil then
-            instakillConfirmed = true
-            ScriptDebug("[instakill] enemy died after a client-side kill")
-        else
-            instakillProbeClaimed = false
-        end
-    end)
+        instakillProbeClaimed = true
+        spawn(function()
+            humanoid.Health = 0
+            wait(2.5)
+            if model.Parent == nil then
+                instakillConfirmed = true
+                ScriptDebug("[instakill] replicates - enabled")
+            else
+                instakillConfirmed = false
+                _G.doInstakill = false
+                notify("Instakill unavailable",
+                    "The server keeps ownership of enemies here, so client-side kills do not replicate. Turned off - leaving it on desyncs the health the farm reads.")
+            end
+        end)
+        return
+    end
+
+    -- Only reached once the probe proved it works.
+    humanoid.Health = 0
 end
 
 function waitForEnemyTags(model, minTags, timeout)
@@ -2858,7 +2888,12 @@ end
 -- studs/s with the same MoveTo loop and no re-seating - the "tapping forward"
 -- crawl. Now it turns the root part only, restores the velocity it was carrying,
 -- and skips corrections too small to see.
-function charLookAt(a, b)
+-- `pitch` aims in full 3D instead of flattening to the character's own height.
+-- The weapon's hit volume is welded to the rig, so it only ever covers what the
+-- character faces: aiming flat while standing over a mob points the weapon out
+-- across its head and every swing misses. Pitching tips the whole rig - head
+-- down - and brings the hit volume onto the target.
+function charLookAt(a, b, pitch)
     if not (a and b and b.Position) then
         return
     end
@@ -2867,7 +2902,8 @@ function charLookAt(a, b)
         return
     end
     local position = root.Position
-    local flat = Vector3.new(b.Position.X, position.Y, b.Position.Z)
+    local flat = pitch and b.Position
+        or Vector3.new(b.Position.X, position.Y, b.Position.Z)
     local delta = flat - position
     if delta.Magnitude < 0.05 then
         return
@@ -3548,20 +3584,26 @@ local ok4 = true;
                 setAction(farmActionNames[result21] or result21, value7 and value7.Name or "")
                 if result21 == "chase" then
                     local reached = false
-                    if shouldTeleportTo(value7) then
-                        local anchor, needsPad = attackAnchor(value7)
-                        if anchor then
-                            reached = teleportToward(
-                                anchor,
-                                tonumber(_G.attack_distance) or 10,
-                                needsPad
-                            )
-                        end
+                    local anchor, needsPad = attackAnchor(value7)
+                    -- An above/below anchor is in mid-air, so it always has to be
+                    -- placed - there is no walking to it. Gating this behind
+                    -- shouldTeleportTo meant that in "far" mode the anchor was
+                    -- thrown away the moment you got within fighting range, and
+                    -- the mode quietly collapsed back to standing on the floor.
+                    if anchor and (needsPad or shouldTeleportTo(value7)) then
+                        reached = teleportToward(
+                            anchor,
+                            tonumber(_G.attack_distance) or 10,
+                            needsPad
+                        )
                         if reached then
-                            setAction("teleporting to", value7.Name)
+                            setAction(needsPad and (_G.attack_position .. " target") or "teleporting to", value7.Name)
                         end
                     else
                         clearHoverPad()
+                    end
+                    if needsPad then
+                        holdAimAt(value7)
                     end
                     if not reached then
                         local _, value56 = rayCast(value.CFrame, value7.PrimaryPart.CFrame, "RayWhitelist", true)

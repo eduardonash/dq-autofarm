@@ -9,7 +9,7 @@
 -- about 13 studs, so keep the offsets small or you will sit there swinging at
 -- nothing.
 _G.attack_position = "default"  -- "default" | "above" | "below" | "behind"
-_G.attack_height = 10           -- studs above/below the mob
+_G.attack_height = 4            -- studs above/below (the weapon only reaches ~6)
 _G.attack_distance = 8          -- how close to get before attacking
 
 -- Teleporting
@@ -19,7 +19,7 @@ _G.attack_distance = 8          -- how close to get before attacking
 --          and is what the melee approach was tuned for.
 -- "always" teleport the whole way in
 _G.teleport_mode = "far"
-_G.teleport_min_distance = 35   -- walk under this, teleport over it
+_G.teleport_min_distance = 20   -- walk under this, teleport over it
 _G.teleport_step = 40           -- max studs per hop (smaller looks less obvious)
 _G.teleport_interval = 0.15     -- seconds between hops
 
@@ -28,7 +28,11 @@ _G.teleport_interval = 0.15     -- seconds between hops
 _G.SemiTeleports = true
 _G.smallTeleportVal = 100
 _G.teleportDuringBossOnly = false -- if true, only use smallTeleports when its time for a boss
-_G.doInstakill = true
+-- Client-side kills do not replicate in this build: the server keeps ownership
+-- of enemies. Leaving this on only desyncs the health the farm reads. The
+-- script probes one enemy and turns it off by itself, but off is the honest
+-- default here.
+_G.doInstakill = false
 
 -- AI Visual Settings
 _G.showTarget = true -- this will highlight each target in a red box
