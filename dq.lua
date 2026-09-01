@@ -707,7 +707,16 @@ function clearHoverPad()
         hoverPad:Destroy()
         hoverPad = nil
     end
+    -- A pad left behind by an earlier run is not in our `hoverPad` upvalue, but
+    -- it is still solid and still under someone's feet.
+    for _, part in ipairs(workspace:GetChildren()) do
+        if part.Name == "dqHoverPad" then
+            part:Destroy()
+        end
+    end
 end
+
+clearHoverPad()
 
 -- Where to stand relative to the enemy, per _G.attack_position.
 -- Returns the position plus whether it needs a hover pad to stand on.
@@ -813,10 +822,26 @@ function teleportToward(destination, stopDistance, hover)
         landing = goal
         ensureHoverPad(landing)
     else
+        -- The script builds its own invisible collision walls, and they are
+        -- solid, so this used to land you on the roof of one: stranded a dozen
+        -- studs up, out of reach of everything, with the AI dodging forever
+        -- because it could never close. Skip past our own parts to real floor.
         local params = RaycastParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
-        params.FilterDescendantsInstances = { character, hoverPad }
-        local ground = workspace:Raycast(goal + Vector3.new(0, 12, 0), Vector3.new(0, -60, 0), params)
+        local ignore = { character, hoverPad }
+        local ground
+        for _ = 1, 8 do
+            params.FilterDescendantsInstances = ignore
+            ground = workspace:Raycast(goal + Vector3.new(0, 12, 0), Vector3.new(0, -60, 0), params)
+            if not ground then
+                break
+            end
+            if ground.Instance.Name ~= result3 then
+                break
+            end
+            table.insert(ignore, ground.Instance)
+            ground = nil
+        end
         if not ground then
             return false
         end
@@ -3581,6 +3606,13 @@ local ok4 = true;
                     game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = value17
                 end)
                 local result21, _ = fn43()
+                -- Only a hover mode is allowed to keep the pad. Clearing it only
+                -- in the chase branch meant that once the AI started dodging the
+                -- player stayed stranded on it, above the mobs and out of reach,
+                -- which kept it dodging - it never got back down.
+                if not attackModeIsOffset() then
+                    clearHoverPad()
+                end
                 setAction(farmActionNames[result21] or result21, value7 and value7.Name or "")
                 if result21 == "chase" then
                     local reached = false
