@@ -149,6 +149,12 @@ _G.auto_upgrade_equip = false
 _G.autoEquipSpell = false
 _G.spellType = "spell" -- "physical", "spell"
 
+-- The script's map-fix walls block physically, as in the original. Some of them
+-- were recorded against the old map geometry and overlap walkable ground in this
+-- build, which shoves the character ~31 studs when it ends up inside one. Turning
+-- this off stops that, but then it can walk off the map entirely (measured Y -190).
+_G.solid_walls = true
+
 -- ANTI LAG SETTINGS
 _G.wall_transparency = .5
 _G.optimize_mobs = true

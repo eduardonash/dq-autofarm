@@ -164,6 +164,16 @@ end
 if type(_G.teleport_interval) ~= "number" then
     _G.teleport_interval = 0.35
 end
+-- Whether the script's own map-fix walls physically block. Off: they still serve
+-- as line-of-sight raycast targets, but cannot eject you when their recorded
+-- position overlaps this build's walkable ground.
+if _G.solid_walls == nil then
+    -- Solid by default, which is the original behaviour. Turning them off does
+    -- stop the ejection, but measured with them off the character walked off the
+    -- map: Y down to -190 before the game hauled it back 190 studs. A 31 stud
+    -- shove is the lesser problem, so this stays on unless you choose otherwise.
+    _G.solid_walls = true
+end
 -- Radius of the "keep away" ring placed around each enemy. This is what stops
 -- the AI walking into a mob and standing there; 0 disables it.
 if type(_G.enemy_spacing) ~= "number" then
@@ -540,6 +550,8 @@ if Library then
                     end
                 end)
             end })
+        performance:Toggle({ Name = "solid walls", Flag = "solid_walls",
+            Default = _G.solid_walls == true, Callback = bind("solid_walls") })
         performance:Toggle({ Name = "build walls slowly", Flag = "loadSlow",
             Default = _G.loadSlow or false, Callback = bind("loadSlow") })
         performance:Toggle({ Name = "think every frame", Flag = "extremelyFast",
@@ -2146,7 +2158,17 @@ local function fn12(a, b)
     PathfindingService.Name = result3
     PathfindingService.Anchored = true
     PathfindingService.Transparency = _G.wall_transparency
-    PathfindingService.CanCollide = true
+    -- These walls were recorded against the old build's map geometry, and in the
+    -- re-uploaded game some of them sit inside walkable ground - measured a
+    -- character standing inside an 82x2x32 slab, which Roblox physics then
+    -- ejected roughly 31 studs, over and over, to the same spot. That is the
+    -- rubberbanding: nothing to do with speed or teleporting, which measured
+    -- identically with them on and off.
+    --
+    -- Their real job here is to be raycast targets for line of sight
+    -- ("RayWhitelist"), and that works without collision. Set _G.solid_walls if
+    -- you want the original blocking behaviour back.
+    PathfindingService.CanCollide = _G.solid_walls == true
     PathfindingService.Parent = workspace
     return PathfindingService
 end
