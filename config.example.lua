@@ -28,8 +28,8 @@ _G.teleport_interval = 0.15     -- seconds between hops
 -- and attack code runs untouched, which is what makes hits land.
 _G.teleport_to_enemies = true
 _G.teleport_min_distance = 30   -- under this it walks, exactly like the original
-_G.teleport_step = 60           -- studs per hop
-_G.teleport_interval = 0.2      -- seconds between hops
+_G.teleport_step = 20           -- studs per hop (60 got rejected by the server)
+_G.teleport_interval = 0.35     -- seconds between hops (~57 studs/s total)
 
 -- The script's own dodge-teleport. This was NOT in the original settings block,
 -- which left it nil and the hop code unreachable - and that was correct. With it

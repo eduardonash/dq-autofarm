@@ -153,11 +153,16 @@ end
 if type(_G.teleport_min_distance) ~= "number" then
     _G.teleport_min_distance = 30
 end
+-- 60 studs every 0.2s is 300 studs/s, about ten times legitimate movement, and
+-- the server rejects it: measured 7 snapbacks in 15s with teleport on versus 1
+-- with it off, same room, same character. These defaults are ~57 studs/s, still
+-- roughly double running speed so it saves time, but far less likely to be
+-- yanked back. Lower them further if you still see rubberbanding.
 if type(_G.teleport_step) ~= "number" then
-    _G.teleport_step = 60
+    _G.teleport_step = 20
 end
 if type(_G.teleport_interval) ~= "number" then
-    _G.teleport_interval = 0.2
+    _G.teleport_interval = 0.35
 end
 -- Radius of the "keep away" ring placed around each enemy. This is what stops
 -- the AI walking into a mob and standing there; 0 disables it.
@@ -453,10 +458,10 @@ if Library then
             Min = 15, Max = 150, Default = _G.teleport_min_distance or 30, Decimals = 1, Suffix = "st",
             Callback = bind("teleport_min_distance") })
         teleport:Slider({ Name = "studs per hop", Flag = "teleport_step",
-            Min = 10, Max = 120, Default = _G.teleport_step or 60, Decimals = 1, Suffix = "st",
+            Min = 5, Max = 60, Default = _G.teleport_step or 20, Decimals = 1, Suffix = "st",
             Callback = bind("teleport_step") })
         teleport:Slider({ Name = "seconds per hop", Flag = "teleport_interval",
-            Min = 0.05, Max = 1, Default = _G.teleport_interval or 0.2, Decimals = 0.01, Suffix = "s",
+            Min = 0.1, Max = 1, Default = _G.teleport_interval or 0.35, Decimals = 0.01, Suffix = "s",
             Callback = bind("teleport_interval") })
 
         local dodge = MovementPage:Section({ Name = "dodge", Side = 2 })
