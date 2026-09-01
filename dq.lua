@@ -165,6 +165,24 @@ if type(_G.enemy_spacing) ~= "number" then
     _G.enemy_spacing = 7
 end
 
+-- Everything this script spawns is tagged, so a previous run's leftovers can be
+-- cleared on load. Without this they pile up in a server the script runs in more
+-- than once: hazard rings stack on enemies and collidable walls stack on the
+-- map, and both degrade movement.
+DQ_PART_TAG = "dqScriptPart"
+
+do
+    local CollectionService = game:GetService("CollectionService")
+    for _, part in ipairs(CollectionService:GetTagged(DQ_PART_TAG)) do
+        pcall(function() part:Destroy() end)
+    end
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if d.Name == "enemyRadius" then
+            pcall(function() d:Destroy() end)
+        end
+    end
+end
+
 function isLobbyPlace()
     return game.PlaceId == LOBBY_PLACE_ID or game.PlaceId == LOBBY_100_PLACE_ID
 end
@@ -2117,6 +2135,7 @@ local function fn12(a, b)
     end
     local PathfindingService = Instance.new("Part")
     item4:AddTag(PathfindingService, "RayWhitelist")
+    item4:AddTag(PathfindingService, DQ_PART_TAG)
     PathfindingService.Size = b
     PathfindingService.CFrame = a
     PathfindingService.Name = result3
@@ -2141,6 +2160,7 @@ local function fn15(a, b, c, d)
     local PathfindingService = Instance.new("Part")
     PathfindingService.Shape = d
     item4:AddTag(PathfindingService, "RayIgnore")
+    item4:AddTag(PathfindingService, DQ_PART_TAG)
     PathfindingService.Material = "Neon"
     if _G.showPath then
         PathfindingService.Transparency = 0.5
@@ -2163,6 +2183,7 @@ end
 local function fn16(a, b, c)
     local PathfindingService = Instance.new("Part")
     item4:AddTag(PathfindingService, "RayIgnore")
+    item4:AddTag(PathfindingService, DQ_PART_TAG)
     PathfindingService.Size = a
     PathfindingService.CFrame = b
     PathfindingService.Parent = c
@@ -2214,6 +2235,16 @@ local function fn17(a, b, c)
         local tbl = {}
         if spacing > 0 then
             tbl = { { spacing, spacing }, { 0, spacing }, { spacing, 0 }, { 0, -spacing } }
+        end
+        -- Ring this enemy once, not once per script run. Auto replay re-runs the
+        -- script on every teleport, and each run used to weld another four
+        -- hazard volumes onto every enemy - measured 6.2 per enemy after two
+        -- runs. Enough of them and the safety grid never finds a safe cell, so
+        -- the AI dodges forever and looks like its pathing is broken.
+        for _, existing in ipairs(a:GetChildren()) do
+            if existing.Name == "enemyRadius" then
+                existing:Destroy()
+            end
         end
         for k, v in pairs(tbl) do
             -- Building the ring yields, and the enemy can die partway through it.
@@ -2493,6 +2524,7 @@ end
 local function fn21(a)
     local PathfindingService = Instance.new("Part")
     item4:AddTag(PathfindingService, "RayIgnore")
+    item4:AddTag(PathfindingService, DQ_PART_TAG)
     PathfindingService.Shape = "Ball"
     PathfindingService.Material = "Neon"
     local result2 = Vector3.new(0.6, 0.6, 0.6)
@@ -3082,6 +3114,7 @@ end
 function visualRay(a)
     local PathfindingService = Instance.new("Part")
     item4:AddTag(PathfindingService, "RayIgnore")
+    item4:AddTag(PathfindingService, DQ_PART_TAG)
     local workspace2 = Vector3.new(2, 2, 2)
     PathfindingService.Size = workspace2
     PathfindingService.Name = "Ray"
@@ -3169,6 +3202,7 @@ local function fn37()
     end
     local PathfindingService = Instance.new("Part")
     item4:AddTag(PathfindingService, "RayIgnore")
+    item4:AddTag(PathfindingService, DQ_PART_TAG)
     local CFrame2 = Vector3.new(value26, 50, value26)
     PathfindingService.Size = CFrame2
     CFrame2 = CFrame
