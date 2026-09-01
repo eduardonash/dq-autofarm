@@ -2189,16 +2189,20 @@ local function fn17(a, b, c)
         return
     end
     if c == nil then
-        -- Dropped SETLIST again: `tbl` came out empty, so the ring of hit
-        -- volumes around the enemy was never built and fn17 did nothing.
-        -- The offsets the decompiler kept ({b,b}, {0,b}, {b,0}, {0,-b}) are the
-        -- 1st, 2nd, 4th and 7th cells of a row-major 3x3 ring, so the four it
-        -- lost are the remaining cells.
-        local tbl = {
-            { b, b }, { 0, b }, { -b, b },
-            { b, 0 }, { -b, 0 },
-            { b, -b }, { 0, -b }, { -b, -b },
-        }
+        -- DELIBERATELY EMPTY. Do not "repair" this.
+        --
+        -- The decompiler dropped this table's SETLIST, and I once reconstructed
+        -- the 3x3 ring it originally held. That was faithful to the bytecode and
+        -- completely wrong for this script: fn16 names every part it makes
+        -- "enemyRadius", and fn36 treats anything called that as a hazard. So a
+        -- reconstructed ring puts eight danger volumes around every enemy - with
+        -- a room of 18, well over a hundred of them - checkAroundPlayer then
+        -- almost never finds a safe cell, the AI returns "dodge" forever, never
+        -- closes to attack, and you stand in the open taking hits until you die.
+        --
+        -- Empty is what the working script has always done: fn17(enemy, 7) is a
+        -- no-op for normal enemies, and the AI is free to chase and kill.
+        local tbl = {}
         for k, v in pairs(tbl) do
             -- Building the ring yields, and the enemy can die partway through it.
             if not a.Parent or not a.PrimaryPart then
@@ -9018,18 +9022,11 @@ function winterFix()
             local value7, value8 = "GetChildren", v3
             local item3 = value8[value7]
             for k2, v2 in pairs4(item3(value8)) do
-                -- The decompiler lost this condition (it emitted `if nil then`,
-                -- so room geometry was never cleared). Reconstructed conservatively:
-                -- decoration only. Anything collidable is left alone - in this
-                -- build the rooms live under workspace.dungeon and the outer
-                -- workspace sweep no longer touches them, so deleting collidable
-                -- parts here would drop you through the floor.
-                if v2.Name ~= "enemyFolder"
-                    and v2.Name ~= "barrier"
-                    and v2.Name ~= "order"
-                    and not v2:FindFirstChildOfClass("Humanoid")
-                    and v2:IsA("BasePart")
-                    and not v2.CanCollide then
+                -- Also deliberately dead, same reasoning as fn17 above: the
+                -- decompiler lost this condition and emitted `if nil then`, so
+                -- the room pass has never run in the build you have been using.
+                -- Reconstructing it changes behaviour nobody asked for.
+                if false then
                     local value9, value10 = "Destroy", v2
                     value10[value9](value10)
                 end
