@@ -23,6 +23,14 @@ _G.teleport_min_distance = 20   -- walk under this, teleport over it
 _G.teleport_step = 40           -- max studs per hop (smaller looks less obvious)
 _G.teleport_interval = 0.15     -- seconds between hops
 
+-- Travel teleport: skips the long walk to the next room or a distant group.
+-- It only ever runs past teleport_min_distance; inside that the original walk-in
+-- and attack code runs untouched, which is what makes hits land.
+_G.teleport_to_enemies = true
+_G.teleport_min_distance = 30   -- under this it walks, exactly like the original
+_G.teleport_step = 60           -- studs per hop
+_G.teleport_interval = 0.2      -- seconds between hops
+
 -- The script's own dodge-teleport. This was NOT in the original settings block,
 -- which left it nil and the hop code unreachable - and that was correct. With it
 -- on, smallTeleportVal (100) flings you up to 100 studs mid-fight, so you never

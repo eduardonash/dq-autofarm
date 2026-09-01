@@ -145,6 +145,20 @@ end
 if type(_G.maxWaitTimeInLobby) ~= "number" then
     _G.maxWaitTimeInLobby = 15
 end
+-- Travel teleport. Only ever used past teleport_min_distance; inside that the
+-- original approach runs untouched, which is what makes hits land.
+if _G.teleport_to_enemies == nil then
+    _G.teleport_to_enemies = true
+end
+if type(_G.teleport_min_distance) ~= "number" then
+    _G.teleport_min_distance = 30
+end
+if type(_G.teleport_step) ~= "number" then
+    _G.teleport_step = 60
+end
+if type(_G.teleport_interval) ~= "number" then
+    _G.teleport_interval = 0.2
+end
 
 function isLobbyPlace()
     return game.PlaceId == LOBBY_PLACE_ID or game.PlaceId == LOBBY_100_PLACE_ID
@@ -404,8 +418,22 @@ if Library then
             Default = _G.optimize_mobs or false, Callback = bind("optimize_mobs") })
     end
 
-    do -- movement (the script's own short-hop dodge - original code, not mine)
-        local dodge = MovementPage:Section({ Name = "dodge", Side = 1 })
+    do -- movement
+        local teleport = MovementPage:Section({ Name = "teleport", Side = 1 })
+
+        teleport:Toggle({ Name = "teleport to enemies", Flag = "teleport_to_enemies",
+            Default = _G.teleport_to_enemies ~= false, Callback = bind("teleport_to_enemies") })
+        teleport:Slider({ Name = "only past", Flag = "teleport_min_distance",
+            Min = 15, Max = 150, Default = _G.teleport_min_distance or 30, Decimals = 1, Suffix = "st",
+            Callback = bind("teleport_min_distance") })
+        teleport:Slider({ Name = "studs per hop", Flag = "teleport_step",
+            Min = 10, Max = 120, Default = _G.teleport_step or 60, Decimals = 1, Suffix = "st",
+            Callback = bind("teleport_step") })
+        teleport:Slider({ Name = "seconds per hop", Flag = "teleport_interval",
+            Min = 0.05, Max = 1, Default = _G.teleport_interval or 0.2, Decimals = 0.01, Suffix = "s",
+            Callback = bind("teleport_interval") })
+
+        local dodge = MovementPage:Section({ Name = "dodge", Side = 2 })
 
         dodge:Toggle({ Name = "short dodge hops", Flag = "SemiTeleports",
             Default = _G.SemiTeleports or false, Callback = bind("SemiTeleports") })
@@ -623,6 +651,99 @@ function autoReplay()
     if not ok then
         ScriptDebug("[replay] replayDungeon call failed")
     end
+end
+
+-- ============================================================================
+-- Teleporting, for covering ground only.
+--
+-- This exists to skip the long walk to the next room or to a distant group. It
+-- is deliberately confined to that: past teleport_min_distance it hops, and
+-- under it the original approach and attack code runs completely untouched.
+-- The last attempt let teleporting reach into fighting range - stopping short of
+-- the mob at a fixed standoff - and that is what stopped hits landing.
+-- ============================================================================
+local lastEnemyTeleport = 0
+
+function teleportTowardEnemy(model)
+    if not _G.teleport_to_enemies then
+        return false
+    end
+    local root = model and (model.PrimaryPart or model:FindFirstChild("HumanoidRootPart"))
+    local character = game:GetService("Players").LocalPlayer.Character
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+    if not (root and hrp) then
+        return false
+    end
+
+    local threshold = tonumber(_G.teleport_min_distance) or 30
+    local delta = root.Position - hrp.Position
+    local distance = delta.Magnitude
+    -- Close enough to fight: hand straight back to the original code.
+    if distance <= threshold then
+        return false
+    end
+
+    -- And never hop while ANYTHING live is in fighting range, even if the AI has
+    -- picked a distant target. Measured without this: 26 and 50 stud jumps with a
+    -- mob 12 studs away, which drags you off something you could be killing.
+    local CollectionService = game:GetService("CollectionService")
+    for _, other in ipairs(CollectionService:GetTagged("Enemy")) do
+        local otherRoot = other.PrimaryPart or other:FindFirstChild("HumanoidRootPart")
+        local otherHumanoid = other:FindFirstChildOfClass("Humanoid")
+        if otherRoot and otherHumanoid and otherHumanoid.Health > 0 then
+            if (otherRoot.Position - hrp.Position).Magnitude <= threshold then
+                return false
+            end
+        end
+    end
+
+    local now = tick()
+    if now - lastEnemyTeleport < (tonumber(_G.teleport_interval) or 0.2) then
+        return true
+    end
+
+    -- Land short of the mob and walk the rest, so the approach still ends the
+    -- way the original did.
+    local step = math.min(tonumber(_G.teleport_step) or 60, distance - 12)
+    if step <= 0 then
+        return false
+    end
+    local goal = hrp.Position + delta.Unit * step
+
+    -- The script builds its own solid invisible walls; without skipping them the
+    -- ray lands you on a roof, stranded out of reach of everything.
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    local ignore = { character }
+    local ground
+    for _ = 1, 8 do
+        params.FilterDescendantsInstances = ignore
+        ground = workspace:Raycast(goal + Vector3.new(0, 14, 0), Vector3.new(0, -80, 0), params)
+        if not ground then
+            break
+        end
+        if ground.Instance.Name ~= result3 then
+            break
+        end
+        table.insert(ignore, ground.Instance)
+        ground = nil
+    end
+    if not ground then
+        return false
+    end
+
+    local landing = ground.Position + Vector3.new(0, 3, 0)
+    -- The hop is capped at 60 studs horizontally, but the landing ray reaches 80
+    -- studs down, so a hop over a pit dropped the character a long way - measured
+    -- as 113 and 120 stud moves. Refuse anything that is not roughly level.
+    if math.abs(landing.Y - hrp.Position.Y) > 20 then
+        return false
+    end
+
+    lastEnemyTeleport = now
+    hrp.CFrame = CFrame.new(landing, Vector3.new(root.Position.X, landing.Y, root.Position.Z))
+    setAction("teleporting to", model.Name)
+    return true
 end
 
 -- The old build let its own server scripts CollectionService-tag every enemy,
@@ -3415,12 +3536,17 @@ local ok4 = true;
                 local result21, _ = fn43()
                 setAction(farmActionNames[result21] or result21, value7 and value7.Name or "")
                 if result21 == "chase" then
+                    if teleportTowardEnemy(value7) then
+                        -- Covering ground this tick; the original approach below
+                        -- takes over as soon as we are close.
+                    else
                     local _, value56 = rayCast(value.CFrame, value7.PrimaryPart.CFrame, "RayWhitelist", true)
                     value8 = value56
                     if value8 == nil then
                         fn35(value7, true)
                     else
                         fn35(value7)
+                    end
                     end
                 elseif result21 == "chase_objective" then
                     if value10 ~= nil and value10.ClassName == "Model" then
