@@ -173,6 +173,14 @@ end
 -- drop you into the void must not be able to persist itself into the next run,
 -- which is exactly what happened when it lived in the autosaving menu.
 -- Set it in the settings block above the loadstring if you really want it off.
+-- Careful speed. Chasing derives from it below at 1.25x, matching what the AI
+-- originally asked for (24 careful / 30 chase). Roblox's default is 16, and the
+-- old hardcoded 31 was roughly double that - fast enough that running into
+-- geometry diverged the client from the server, and the correction is the snap.
+if type(_G.walk_speed) ~= "number" then
+    _G.walk_speed = 24
+end
+
 if _G.solid_walls ~= false then
     _G.solid_walls = true
 end
@@ -198,6 +206,14 @@ do
             pcall(function() d:Destroy() end)
         end
     end
+end
+
+function carefulSpeed()
+    return tonumber(_G.walk_speed) or 24
+end
+
+function chaseSpeed()
+    return carefulSpeed() * 1.25
 end
 
 function isLobbyPlace()
@@ -475,6 +491,10 @@ if Library then
         teleport:Slider({ Name = "seconds per hop", Flag = "teleport_interval",
             Min = 0.1, Max = 1, Default = _G.teleport_interval or 0.35, Decimals = 0.01, Suffix = "s",
             Callback = bind("teleport_interval") })
+
+        teleport:Slider({ Name = "walk speed", Flag = "walk_speed",
+            Min = 16, Max = 32, Default = _G.walk_speed or 24, Decimals = 1,
+            Callback = bind("walk_speed") })
 
         local dodge = MovementPage:Section({ Name = "dodge", Side = 2 })
 
@@ -3543,28 +3563,28 @@ local function fn43()
         end
         if checkAroundPlayer(result12, #result12) then
             if ok5 and value10 ~= nil then
-                game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = 24
+                game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = carefulSpeed()
                 return "chase_objective", nil
             end
             if value - 5 > ok then
-                game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = 24
+                game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = carefulSpeed()
                 return "run", nil
             end
             if ok < value then
-                game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = 24
+                game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = carefulSpeed()
                 return "strafe", nil
             end
             if ok3 then
-                game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = 24
+                game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = carefulSpeed()
             else
-                game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = 30
+                game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = chaseSpeed()
             end
             return "chase", nil
         end
         if not ok3 and _G.teleportDuringBossOnly then
-            game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = 30
+            game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = chaseSpeed()
         else
-            game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = 24
+            game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = carefulSpeed()
         end
         return "dodge", nil
     end
@@ -3608,7 +3628,12 @@ local ok4 = true;
             local value, value2 = value55, value54
             if value ~= nil and value2 ~= nil and value2.Health > 0 then
                 spawn(function()
-                    game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = value17
+                    -- Was value17 (31), rewritten every single frame, which
+                    -- overrode whatever fn43 had just chosen and gave the server
+                    -- a moving target: sampled at 31 for 407 frames and 30 for
+                    -- 1871 across one 2278-frame window. Now it sets the careful
+                    -- speed and leaves fn43 free to raise it for a chase.
+                    game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = carefulSpeed()
                 end)
                 local result21, _ = fn43()
                 setAction(farmActionNames[result21] or result21, value7 and value7.Name or "")
@@ -4480,7 +4505,7 @@ waitForCharacter().Humanoid.MoveToFinished:Connect(fn32)
 local function fn49(a)
     local _, _, value, _ = fn23()
     value.MoveToFinished:Connect(fn32)
-    value.WalkSpeed = value17
+    value.WalkSpeed = carefulSpeed()
     value.AutoRotate = false
     spawn(fn11)
 end

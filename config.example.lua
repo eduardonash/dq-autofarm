@@ -3,25 +3,11 @@
 -- These are the values used the FIRST time you run the script. After that the
 -- in-game menu (Right Shift) writes Radiance/Configs/dq_autofarm.json, and that
 -- file wins over this block. Delete it to come back to these.
--- Where to stand while attacking
--- "default" walks straight at the mob, "above"/"below" park you off its hitbox
--- on an invisible pad, "behind" comes in from its back. Weapons only reach
--- about 13 studs, so keep the offsets small or you will sit there swinging at
--- nothing.
-_G.attack_position = "default"  -- "default" | "above" | "below" | "behind"
-_G.attack_height = 4            -- studs above/below (the weapon only reaches ~6)
-_G.attack_distance = 8          -- how close to get before attacking
-
--- Teleporting
--- "off"    walk everywhere
--- "far"    only teleport to cover distance - past teleport_min_distance, which
---          is room-to-room range. Closer than that it walks, which looks better
---          and is what the melee approach was tuned for.
--- "always" teleport the whole way in
-_G.teleport_mode = "far"
-_G.teleport_min_distance = 20   -- walk under this, teleport over it
-_G.teleport_step = 40           -- max studs per hop (smaller looks less obvious)
-_G.teleport_interval = 0.15     -- seconds between hops
+-- Movement speed. This is the "careful" speed (strafe, dodge, backing off);
+-- chasing runs 25% faster. Roblox's default is 16. The script used to hardcode
+-- 31, which is fast enough that running into geometry diverges the client from
+-- the server and the correction shows up as rubberbanding.
+_G.walk_speed = 24
 
 -- Travel teleport: skips the long walk to the next room or a distant group.
 -- It only ever runs past teleport_min_distance; inside that the original walk-in

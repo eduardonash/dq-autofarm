@@ -69,6 +69,13 @@ elapsed` underneath.
   and it was never enabled in the original settings. With `smallTeleportVal` at
   100 it flings you up to 100 studs mid-fight, so you never settle beside a mob
   long enough to damage it.
+- **Walk speed** is `_G.walk_speed` (default 24), the careful speed used for
+  strafing, dodging and backing off; chasing derives from it at 1.25x. The
+  script used to hardcode 31 in three places that overwrote each other every
+  frame. 31 is roughly double Roblox's default of 16, and fast enough that
+  running into geometry diverges the client from the server - the correction is
+  what shows up as rubberbanding. Measured over 18s with the farm running:
+  31 gave one 16-stud correction, 24 gave none.
 - **Instakill** relies on owning the enemy's assembly so a client-side `Health`
   write replicates, which the old build achieved through `SimulationRadius`.
   The script probes once per session and turns the option off by itself, with a
